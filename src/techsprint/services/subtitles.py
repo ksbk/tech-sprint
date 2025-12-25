@@ -15,7 +15,7 @@ import os
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Any, Optional
+from typing import Protocol, Optional
 
 from techsprint.core.artifacts import SubtitleArtifact
 from techsprint.core.job import Job
