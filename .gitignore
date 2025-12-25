@@ -1,26 +1,40 @@
-# Python
+# -------------------------------------------------
+# Python / tooling
+# -------------------------------------------------
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# Envs
-.env
-.env.*
+# -------------------------------------------------
+# Virtual environments
+# -------------------------------------------------
 .venv/
 venv/
 
-# Media / outputs
+# -------------------------------------------------
+# Environment files (never commit secrets)
+# -------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# -------------------------------------------------
+# TechSprint runtime outputs (generated)
+# -------------------------------------------------
 .techsprint/
 outputs/
-*.mp3
-*.wav
-*.mp4
-*.srt
+dist/
+build/
 
-# OS
+# -------------------------------------------------
+# OS / editor noise
+# -------------------------------------------------
 .DS_Store
+Thumbs.db
+.vscode/.DS_Store

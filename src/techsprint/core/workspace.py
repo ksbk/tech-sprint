@@ -5,6 +5,7 @@ from pathlib import Path
 import uuid
 
 
+
 @dataclass(frozen=True)
 class Workspace:
     root: Path
@@ -27,6 +28,12 @@ class Workspace:
     def script_txt(self) -> Path:
         return self.path("script.txt")
 
+
+    @property
+    def audio_mp3(self) -> Path:
+        return self.path("audio.mp3")
+
+    # Optionally keep audio_wav for backward compatibility
     @property
     def audio_wav(self) -> Path:
         return self.path("audio.wav")

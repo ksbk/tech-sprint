@@ -14,7 +14,7 @@ class ScriptArtifact:
 @dataclass(frozen=True)
 class AudioArtifact:
     path: Path
-    format: str = "wav"
+    format: str = "mp3"
 
 
 @dataclass(frozen=True)

@@ -31,16 +31,26 @@ def config() -> None:
 def make(
     anchor: str = typer.Option(None, help="Anchor id (overrides config)."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
-    log_level: str = typer.Option("INFO", help="Log level."),
+    log_level: str = typer.Option(None, help="Log level (overrides config)."),
+    background_video: str = typer.Option(None, help="Background video path (overrides config)."),
+    burn_subtitles: bool = typer.Option(None, help="Burn subtitles into video (overrides config)."),
 ) -> None:
     """Run the pipeline once."""
-    configure_logging(log_level)
     settings = Settings()
 
-    if anchor:
+    # Apply CLI overrides on top of env/.env settings
+    if anchor is not None:
         settings.anchor = anchor
-    if workdir:
+    if workdir is not None:
         settings.workdir = workdir
+    if background_video is not None:
+        settings.background_video = background_video
+    if burn_subtitles is not None:
+        settings.burn_subtitles = burn_subtitles
+
+    # Configure logging after overrides so we use the final resolved level
+    effective_level = log_level or settings.log_level
+    configure_logging(effective_level)
 
     if settings.anchor not in ANCHORS:
         raise typer.BadParameter(f"Unknown anchor '{settings.anchor}'. Use `techsprint anchors`.")
