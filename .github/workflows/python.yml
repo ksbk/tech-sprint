@@ -27,7 +27,7 @@ jobs:
         mypy src/techsprint
     - name: Test with pytest
       run: |
-        pytest
+        PYTHONPATH=src pytest
     - name: Check formatting with black
       run: |
         black --check src/techsprint
