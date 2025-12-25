@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Envs
+.env
+.env.*
+.venv/
+venv/
+
+# Media / outputs
+.techsprint/
+outputs/
+*.mp3
+*.wav
+*.mp4
+*.srt
+
+# OS
+.DS_Store
