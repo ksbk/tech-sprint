@@ -18,10 +18,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 black isort pytest
-    - name: Lint with flake8
+        pip install ruff mypy black isort pytest
+    - name: Lint with ruff
       run: |
-        flake8 src/techsprint
+        ruff check src/techsprint
+    - name: Type check with mypy
+      run: |
+        mypy src/techsprint
     - name: Test with pytest
       run: |
         pytest
