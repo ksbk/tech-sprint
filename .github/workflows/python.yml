@@ -22,12 +22,12 @@ jobs:
     - name: Lint with ruff
       run: |
         ruff check src/techsprint
+    - name: Check import sorting and formatting with ruff
+      run: |
+        ruff format --check src/techsprint
     - name: Type check with mypy
       run: |
         mypy src/techsprint
     - name: Test with pytest
       run: |
         PYTHONPATH=src pytest
-    - name: Check import sorting with isort
-      run: |
-        isort --check-only src/techsprint
