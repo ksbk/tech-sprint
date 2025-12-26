@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.25.0"]
+requires = ["hatchling>=1.25.0", "hatch-vcs>=0.4.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "techsprint"
-version = "0.1.0"
+dynamic = ["version"]
 description = "TechSprint: configuration-driven, multi-anchor short-form video pipeline."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,8 +32,32 @@ dev = [
 [project.scripts]
 techsprint = "techsprint.cli.main:app"
 
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/techsprint/_version.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/techsprint"]
+exclude = [
+  "/.trunk",
+  "/.trunk/**",
+  "/.techsprint",
+  "/.techsprint/**",
+  "/.uv-cache",
+  "/.uv-cache/**",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "/.trunk",
+  "/.trunk/**",
+  "/.techsprint",
+  "/.techsprint/**",
+  "/.uv-cache",
+  "/.uv-cache/**",
+]
 
 [tool.ruff]
 line-length = 100
