@@ -70,3 +70,54 @@ def run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             f"STDERR:\n{proc.stderr}"
         )
     return proc
+
+
+def build_background_cmd(
+    out: str,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+    fps: int = 30,
+    duration: int = 5,
+    color: str = "black",
+) -> list[str]:
+    return [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={color}:s={width}x{height}:d={duration}",
+        "-r",
+        str(fps),
+        "-pix_fmt",
+        "yuv420p",
+        out,
+    ]
+
+
+def build_sine_audio_cmd(
+    out: str,
+    *,
+    duration: int = 3,
+    frequency: int = 1000,
+) -> list[str]:
+    return [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency={frequency}:duration={duration}",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "4",
+        out,
+    ]

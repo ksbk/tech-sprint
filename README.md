@@ -16,14 +16,32 @@ and is structured so you can plug in OpenAI/TTS/ffmpeg/video rendering later wit
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-techsprint make
+techsprint run
 ```
 
 Outputs will be placed in `./.techsprint/<run_id>/`.
 
+## 60-second demo (no API keys)
+
+Requires `ffmpeg` on your PATH.
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+techsprint demo
+```
+
+Or run demo mode with the standard command:
+
+```bash
+techsprint make --demo
+```
+
 ## Commands
 
-- `techsprint make` – runs the pipeline with the selected anchor (default: tech)
+- `techsprint run` – runs the pipeline with the selected anchor (default: tech)
+- `techsprint run --demo` – runs the demo pipeline without API keys
+- `techsprint make` – legacy alias for `techsprint run`
 - `techsprint anchors` – list available anchors
 - `techsprint config` – print resolved configuration
 

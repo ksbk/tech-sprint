@@ -5,13 +5,48 @@ import typer
 
 from techsprint.anchors import ANCHORS, list_anchors
 from techsprint.config.settings import Settings
+from techsprint.demo import run_demo
 from techsprint.domain.job import Job
 from techsprint.domain.workspace import Workspace
 from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
+from techsprint.renderers.base import RenderSpec
 from techsprint.utils.logging import configure_logging, get_logger
 
 app = typer.Typer(add_completion=False)
 log = get_logger(__name__)
+
+def _run_anchor_pipeline(
+    *,
+    settings: Settings,
+    render_spec: RenderSpec | None,
+) -> tuple[Job, Workspace]:
+    if settings.anchor not in ANCHORS:
+        raise typer.BadParameter(f"Unknown anchor '{settings.anchor}'. Use `techsprint anchors`.")
+
+    workspace = Workspace.create(settings.workdir)
+    job = Job(settings=settings, workspace=workspace)
+
+    anchor_cls = ANCHORS[settings.anchor]
+    anchor_obj = anchor_cls(render=render_spec)
+    job = anchor_obj.run(job)
+    return job, workspace
+
+def _parse_render(render: str | None) -> RenderSpec | None:
+    render_map = {
+        "tiktok": TIKTOK,
+        "reels": REELS,
+        "youtube-shorts": YOUTUBE_SHORTS,
+        "youtube": YOUTUBE_SHORTS,
+        "yt": YOUTUBE_SHORTS,
+    }
+    if render is None:
+        return None
+
+    render_key = render.strip().lower()
+    if render_key not in render_map:
+        valid = "tiktok, reels, youtube-shorts, youtube, yt"
+        raise typer.BadParameter(f"Unknown render '{render}'. Use one of: {valid}.")
+    return render_map[render_key]
 
 
 @app.command()
@@ -39,6 +74,10 @@ def make(
         None,
         help="Render profile (tiktok, reels, youtube-shorts).",
     ),
+    demo: bool = typer.Option(
+        False,
+        help="Run demo pipeline without API keys.",
+    ),
 ) -> None:
     """Run the pipeline once."""
     settings = Settings()
@@ -53,36 +92,103 @@ def make(
     if burn_subtitles is not None:
         settings.burn_subtitles = burn_subtitles
 
-    render_map = {
-        "tiktok": TIKTOK,
-        "reels": REELS,
-        "youtube-shorts": YOUTUBE_SHORTS,
-        "youtube": YOUTUBE_SHORTS,
-        "yt": YOUTUBE_SHORTS,
-    }
-    render_spec = None
-    if render is not None:
-        render_key = render.strip().lower()
-        if render_key not in render_map:
-            valid = "tiktok, reels, youtube-shorts, youtube, yt"
-            raise typer.BadParameter(
-                f"Unknown render '{render}'. Use one of: {valid}."
-            )
-        render_spec = render_map[render_key]
+    render_spec = _parse_render(render)
 
     # Configure logging after overrides so we use the final resolved level
     effective_level = log_level or settings.log_level
     configure_logging(effective_level)
 
-    if settings.anchor not in ANCHORS:
-        raise typer.BadParameter(f"Unknown anchor '{settings.anchor}'. Use `techsprint anchors`.")
+    if demo:
+        if workdir is not None:
+            settings.workdir = workdir
+        render_spec = _parse_render(render)
+        workspace = Workspace.create(settings.workdir)
+        job = Job(settings=settings, workspace=workspace)
+        job = run_demo(job, render=render_spec)
+        out = job.artifacts.video.path if job.artifacts.video else None
+        typer.echo(f"✅ Done. run_id={workspace.run_id}")
+        if out:
+            typer.echo(f"📦 Output: {out}")
+        return
+
+    job, workspace = _run_anchor_pipeline(settings=settings, render_spec=render_spec)
+
+    out = job.artifacts.video.path if job.artifacts.video else None
+    typer.echo(f"✅ Done. run_id={workspace.run_id}")
+    if out:
+        typer.echo(f"📦 Output: {out}")
+
+
+@app.command()
+def demo(
+    workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
+    log_level: str = typer.Option(None, help="Log level (overrides config)."),
+    render: str = typer.Option(
+        None,
+        help="Render profile (tiktok, reels, youtube-shorts).",
+    ),
+) -> None:
+    """Run a local demo without API keys."""
+    settings = Settings()
+    if workdir is not None:
+        settings.workdir = workdir
+
+    effective_level = log_level or settings.log_level
+    configure_logging(effective_level)
+
+    render_spec = _parse_render(render)
 
     workspace = Workspace.create(settings.workdir)
     job = Job(settings=settings, workspace=workspace)
+    job = run_demo(job, render=render_spec)
 
-    anchor_cls = ANCHORS[settings.anchor]
-    anchor_obj = anchor_cls(render=render_spec)
-    job = anchor_obj.run(job)
+    out = job.artifacts.video.path if job.artifacts.video else None
+    typer.echo(f"✅ Done. run_id={workspace.run_id}")
+    if out:
+        typer.echo(f"📦 Output: {out}")
+
+
+@app.command()
+def run(
+    demo_mode: bool = typer.Option(
+        False,
+        "--demo",
+        help="Run demo pipeline without API keys.",
+    ),
+    anchor: str = typer.Option(None, help="Anchor id (overrides config)."),
+    workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
+    log_level: str = typer.Option(None, help="Log level (overrides config)."),
+    background_video: str = typer.Option(None, help="Background video path (overrides config)."),
+    burn_subtitles: bool = typer.Option(None, help="Burn subtitles into video (overrides config)."),
+    render: str = typer.Option(
+        None,
+        help="Render profile (tiktok, reels, youtube-shorts).",
+    ),
+) -> None:
+    """Run the pipeline (or demo with --demo)."""
+    if demo_mode:
+        demo(
+            workdir=workdir,
+            log_level=log_level,
+            render=render,
+        )
+        return
+
+    settings = Settings()
+    if anchor is not None:
+        settings.anchor = anchor
+    if workdir is not None:
+        settings.workdir = workdir
+    if background_video is not None:
+        settings.background_video = background_video
+    if burn_subtitles is not None:
+        settings.burn_subtitles = burn_subtitles
+
+    effective_level = log_level or settings.log_level
+    configure_logging(effective_level)
+
+    render_spec = _parse_render(render)
+    job, workspace = _run_anchor_pipeline(settings=settings, render_spec=render_spec)
 
     out = job.artifacts.video.path if job.artifacts.video else None
     typer.echo(f"✅ Done. run_id={workspace.run_id}")

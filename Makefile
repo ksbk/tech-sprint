@@ -30,6 +30,7 @@ test:
 	pytest tests/ --maxfail=3 --disable-warnings -v
 
 run:
+	@echo "[DEPRECATED] Use \`techsprint run\` (or \`techsprint run --demo\`) instead." 1>&2
 	STUB_SCRIPT_SERVICE=1 uv run techsprint make --log-level DEBUG
 
 clean:
