@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
+import shutil
 import subprocess
 from pathlib import Path
-import shutil
 from typing import TYPE_CHECKING
 
+from techsprint.exceptions import TechSprintError
 from techsprint.utils.checks import require_binary
 
 if TYPE_CHECKING:
@@ -98,6 +101,38 @@ def probe_duration(path: str | Path) -> float | None:
         return float(proc.stdout.strip())
     except ValueError:
         return None
+
+
+def probe_loudnorm(path: str | Path) -> dict:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise TechSprintError("ffmpeg not found; loudnorm analysis unavailable.")
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "info",
+            "-i",
+            str(path),
+            "-af",
+            "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise TechSprintError(f"ffmpeg loudnorm failed: {proc.stderr.strip()}")
+
+    matches = re.findall(r"\{.*?\}", proc.stderr, re.S)
+    for candidate in reversed(matches):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    raise TechSprintError("ffmpeg loudnorm JSON not found or invalid.")
 
 
 def build_background_cmd(

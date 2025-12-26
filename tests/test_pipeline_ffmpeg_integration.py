@@ -13,6 +13,7 @@ from techsprint.domain.job import Job
 from techsprint.domain.workspace import Workspace
 from techsprint.pipeline import Pipeline
 from techsprint.services.compose import ComposeService
+from techsprint.utils import ffmpeg
 
 
 def _require_ffmpeg() -> None:
@@ -149,6 +150,9 @@ def test_pipeline_end_to_end_ffmpeg(tmp_path: Path) -> None:
     assert job.artifacts.video is not None
     assert job.artifacts.video.path.exists()
     assert job.artifacts.video.path.stat().st_size > 0
+
+    loud = ffmpeg.probe_loudnorm(job.artifacts.video.path)
+    assert "output_i" in loud
 
     cues = job.workspace.subtitles_srt.read_text(encoding="utf-8").split("\n\n")
     cue_count = len([b for b in cues if b.strip()])
