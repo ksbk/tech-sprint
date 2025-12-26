@@ -116,7 +116,11 @@ class ScriptService:
     ) -> ScriptArtifact:
         log.info("Generating script with model=%s", job.settings.model)
 
-        rendered_prompt = prompt.render(headlines=headlines)
+        rendered_prompt = prompt.render(
+            headlines=headlines,
+            language=job.settings.language,
+            locale=job.settings.locale,
+        )
 
         text = self.llm.generate(
             system=prompt.system,

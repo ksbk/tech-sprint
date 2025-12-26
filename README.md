@@ -19,7 +19,7 @@ cp .env.example .env
 techsprint run
 ```
 
-Outputs will be placed in `./.techsprint/<run_id>/`.
+Outputs will be placed in `./.techsprint/<run_id>/` alongside a `run.json` manifest.
 
 ## 60-second demo (no API keys)
 
@@ -44,6 +44,28 @@ techsprint make --demo
 - `techsprint make` – legacy alias for `techsprint run`
 - `techsprint anchors` – list available anchors
 - `techsprint config` – print resolved configuration
+- `techsprint runs` – list recent runs; `techsprint runs latest`; `techsprint runs inspect <run_id>`
+
+Language/locale examples:
+
+```bash
+techsprint run --demo --language is --locale is-IS
+techsprint run --language fr --locale fr-FR --voice "<voiceId>"
+```
+
+Voice discovery:
+
+```bash
+techsprint voices --locale fr-FR
+techsprint voices --locale fr-FR --json
+techsprint run --demo --locale fr-FR --language fr
+```
+
+Diagnostics:
+
+```bash
+techsprint doctor
+```
 
 ## Next integrations (drop-in)
 

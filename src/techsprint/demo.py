@@ -8,18 +8,40 @@ from techsprint.domain.artifacts import AudioArtifact, ScriptArtifact, SubtitleA
 from techsprint.domain.job import Job
 from techsprint.pipeline import Pipeline
 from techsprint.renderers.base import RenderSpec
-from techsprint.services.audio import EdgeTTSBackend
+from techsprint.services.audio import EdgeTTSBackend, select_voice
 from techsprint.services.compose import ComposeService
 from techsprint.utils import ffmpeg
 from techsprint.utils.logging import get_logger
 
 log = get_logger(__name__)
 
-STUB_SCRIPT = (
-    "Today in tech: new tools are streamlining video production, "
-    "bringing professional workflows to smaller teams. "
-    "Expect faster turnarounds and clearer storytelling this year."
-)
+STUB_SCRIPTS = {
+    "en": (
+        "Today in tech: new tools are streamlining video production, "
+        "bringing professional workflows to smaller teams. "
+        "Expect faster turnarounds and clearer storytelling this year."
+    ),
+    "fr": (
+        "Bonjour. Voici les nouvelles tech du jour. "
+        "De nouveaux outils accelerent la production video. "
+        "Les equipes petites livrent plus vite avec des recits plus clairs."
+    ),
+    "is": (
+        "Haello. Taeknifrettir dagsins. "
+        "Ny verkfaeri hraeda videovinnslu. "
+        "Litlar teymur skila hraedari nidurstodum og skyrari sogn."
+    ),
+}
+
+
+def _demo_script(language: str, locale: str) -> str:
+    lang = (language or "").lower()
+    if lang in STUB_SCRIPTS:
+        return STUB_SCRIPTS[lang]
+    if locale:
+        prefix = locale.split("-")[0].lower()
+        return STUB_SCRIPTS.get(prefix, STUB_SCRIPTS["en"])
+    return STUB_SCRIPTS["en"]
 
 
 def edge_tts_available() -> bool:
@@ -118,15 +140,17 @@ class DemoNewsService:
 @dataclass
 class DemoScriptService:
     def generate(self, job: Job, *, prompt, headlines: str) -> ScriptArtifact:
+        text = _demo_script(job.settings.language, job.settings.locale)
         path = job.workspace.script_txt
-        path.write_text(STUB_SCRIPT, encoding="utf-8")
-        return ScriptArtifact(path=path, text=STUB_SCRIPT)
+        path.write_text(text, encoding="utf-8")
+        return ScriptArtifact(path=path, text=text)
 
 
 @dataclass
 class DemoAudioService:
     def generate(self, job: Job, *, text: str) -> AudioArtifact:
         out = job.workspace.audio_mp3
+        voice = select_voice(job)
 
         if edge_tts_available():
             try:
@@ -135,7 +159,7 @@ class DemoAudioService:
                 backend_coro = backend.synthesize(
                     text=text,
                     out_path=out,
-                    voice=job.settings.voice,
+                    voice=voice,
                 )
                 _run_async(backend_coro)
             except Exception:

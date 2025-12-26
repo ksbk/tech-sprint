@@ -32,6 +32,14 @@ class Settings(BaseSettings):
         default="tech",
         description="Anchor id to run (e.g. tech, finance, gossip).",
     )
+    language: str = Field(
+        default="en",
+        description="Language code for generated content (e.g. en, fr, is).",
+    )
+    locale: str = Field(
+        default="en-US",
+        description="Locale for language/voice selection (e.g. en-US, fr-FR).",
+    )
 
     # ------------------------------------------------------------------
     # News
@@ -100,6 +108,8 @@ class Settings(BaseSettings):
         return {
             "workdir": self.workdir,
             "anchor": self.anchor,
+            "language": self.language,
+            "locale": self.locale,
             "rss_url": self.rss_url,
             "max_items": self.max_items,
             "model": self.model,

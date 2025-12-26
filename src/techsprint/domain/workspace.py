@@ -45,3 +45,7 @@ class Workspace:
     @property
     def output_mp4(self) -> Path:
         return self.path("final.mp4")
+
+    @property
+    def run_manifest(self) -> Path:
+        return self.path("run.json")

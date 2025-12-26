@@ -103,6 +103,72 @@ def probe_duration(path: str | Path) -> float | None:
         return None
 
 
+def _parse_fps(rate: str | None) -> float | None:
+    if not rate or rate == "0/0":
+        return None
+    try:
+        num, den = rate.split("/")
+        return float(num) / float(den)
+    except Exception:
+        return None
+
+
+def probe_media(path: str | Path) -> dict | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    proc = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_format",
+            "-show_streams",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    duration = None
+    raw_duration = data.get("format", {}).get("duration")
+    try:
+        duration = float(raw_duration) if raw_duration else None
+    except (TypeError, ValueError):
+        duration = None
+
+    width = height = fps = None
+    vcodec = pix_fmt = None
+    audio_present = False
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "video":
+            width = stream.get("width")
+            height = stream.get("height")
+            vcodec = stream.get("codec_name")
+            pix_fmt = stream.get("pix_fmt")
+            fps = _parse_fps(stream.get("avg_frame_rate") or stream.get("r_frame_rate"))
+        if stream.get("codec_type") == "audio":
+            audio_present = True
+
+    return {
+        "duration_seconds": duration,
+        "width": width,
+        "height": height,
+        "fps": fps,
+        "video_codec": vcodec,
+        "pixel_format": pix_fmt,
+        "audio_present": audio_present,
+    }
+
+
 def probe_loudnorm(path: str | Path) -> dict:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:

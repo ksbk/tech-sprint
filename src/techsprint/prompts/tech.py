@@ -9,6 +9,7 @@ TECH_PROMPT = PromptSpec(
         "Write a 45-60 second tech news script based on these headlines:\n"
         "{headlines}\n\n"
         "Requirements:\n"
+        "- {language_directive}\n"
         "- Hook in first 1-2 lines\n"
         "- 3 main points max\n"
         "- End with a short sign-off\n"

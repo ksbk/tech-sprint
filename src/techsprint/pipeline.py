@@ -30,6 +30,8 @@ from techsprint.services.compose import ComposeService
 from techsprint.services.news import NewsService
 from techsprint.services.script import ScriptService, create_script_service
 from techsprint.services.subtitles import SubtitleService, create_subtitle_service
+from techsprint.utils.manifest import write_run_manifest
+from techsprint.utils.timing import StepTimer, utc_now
 
 
 class Pipeline:
@@ -71,46 +73,68 @@ class Pipeline:
             The same Job instance with populated Artifacts.
         """
 
+        timer = StepTimer(clock=utc_now)
+        clock = timer.clock
+        started_at = clock()
+
         # Initialize artifacts early so partial failures still leave state behind.
         job.artifacts = Artifacts()
 
-        # 1) Fetch news
-        news_bundle = self.news.fetch(
-            job.settings.rss_url,
-            job.settings.max_items,
-        )
-
-        # 2) Script generation (LLM)
-        script_service = self.script or create_script_service(job)
-        script_artifact = script_service.generate(
-            job,
-            prompt=prompt,
-            headlines=news_bundle.as_headlines(),
-        )
-        job.artifacts.script = script_artifact
-
-        # 3) Audio generation
-        audio_service = self.audio or create_audio_service()
-        audio_artifact = audio_service.generate(
-            job,
-            text=script_artifact.text,
-        )
-        job.artifacts.audio = audio_artifact
-
-        # 4) Subtitle generation (ASR or fallback)
-        subtitle_service = self.subtitles or create_subtitle_service(job)
-        subtitle_artifact = subtitle_service.generate(
-            job,
-            script_text=script_artifact.text,
-        )
-        job.artifacts.subtitles = subtitle_artifact
-
-        # 5) Compose final video
-        # If your ComposeService doesn't accept `render=...` yet, keep the call as `.render(job)`.
         try:
-            video_artifact = self.compose.render(job, render=self.render)
-        except TypeError:
-            video_artifact = self.compose.render(job)
+            # 1) Fetch news
+            with timer.step("fetch_news"):
+                news_bundle = self.news.fetch(
+                    job.settings.rss_url,
+                    job.settings.max_items,
+                )
 
-        job.artifacts.video = video_artifact
-        return job
+            # 2) Script generation (LLM)
+            with timer.step("generate_script"):
+                script_service = self.script or create_script_service(job)
+                script_artifact = script_service.generate(
+                    job,
+                    prompt=prompt,
+                    headlines=news_bundle.as_headlines(),
+                )
+                job.artifacts.script = script_artifact
+
+            # 3) Audio generation
+            with timer.step("generate_audio"):
+                audio_service = self.audio or create_audio_service()
+                audio_artifact = audio_service.generate(
+                    job,
+                    text=script_artifact.text,
+                )
+                job.artifacts.audio = audio_artifact
+
+            # 4) Subtitle generation (ASR or fallback)
+            with timer.step("generate_subtitles"):
+                subtitle_service = self.subtitles or create_subtitle_service(job)
+                subtitle_artifact = subtitle_service.generate(
+                    job,
+                    script_text=script_artifact.text,
+                )
+                job.artifacts.subtitles = subtitle_artifact
+
+            # 5) Compose final video
+            # If your ComposeService doesn't accept `render=...` yet, keep the call as `.render(job)`.
+            with timer.step("compose_video"):
+                try:
+                    video_artifact = self.compose.render(job, render=self.render)
+                except TypeError:
+                    video_artifact = self.compose.render(job)
+                job.artifacts.video = video_artifact
+
+            return job
+        finally:
+            finished_at = clock()
+            try:
+                write_run_manifest(
+                    job=job,
+                    steps=timer.steps,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    render=self.render,
+                )
+            except Exception:
+                pass

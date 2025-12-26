@@ -15,3 +15,10 @@ Example: choose a renderer from the CLI:
 ```bash
 techsprint make --render tiktok
 ```
+
+Example: run in another language/locale:
+
+```bash
+techsprint run --demo --language is --locale is-IS
+techsprint run --language fr --locale fr-FR --voice "<voiceId>"
+```

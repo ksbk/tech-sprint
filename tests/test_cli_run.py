@@ -12,19 +12,36 @@ def test_cli_run_invokes_anchor(monkeypatch, tmp_path: Path) -> None:
 
     class DummyAnchor:
         called = False
+        language = None
+        locale = None
 
         def __init__(self, render=None) -> None:
             pass
 
         def run(self, job):  # noqa: ANN001
             DummyAnchor.called = True
+            DummyAnchor.language = job.settings.language
+            DummyAnchor.locale = job.settings.locale
             return job
 
     monkeypatch.setitem(cli_main.ANCHORS, "tech", DummyAnchor)
 
     runner = CliRunner()
     workdir = tmp_path / ".techsprint"
-    result = runner.invoke(app, ["run", "--workdir", str(workdir)])
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--workdir",
+            str(workdir),
+            "--language",
+            "fr",
+            "--locale",
+            "fr-FR",
+        ],
+    )
 
     assert result.exit_code == 0
     assert DummyAnchor.called is True
+    assert DummyAnchor.language == "fr"
+    assert DummyAnchor.locale == "fr-FR"

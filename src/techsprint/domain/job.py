@@ -12,6 +12,7 @@ class Job:
     settings: Settings
     workspace: Workspace
     artifacts: Artifacts = field(default_factory=Artifacts)
+    cli_overrides: dict[str, str] = field(default_factory=dict)
 
     def with_artifacts(self, artifacts: Artifacts) -> "Job":
         self.artifacts = artifacts
