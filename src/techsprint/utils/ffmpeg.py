@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
+import shutil
 from typing import TYPE_CHECKING
 
 from techsprint.utils.checks import require_binary
@@ -70,6 +72,32 @@ def run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             f"STDERR:\n{proc.stderr}"
         )
     return proc
+
+
+def probe_duration(path: str | Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    proc = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return float(proc.stdout.strip())
+    except ValueError:
+        return None
 
 
 def build_background_cmd(

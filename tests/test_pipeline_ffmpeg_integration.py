@@ -103,10 +103,13 @@ class FakeAudioService:
 class FakeSubtitleService:
     def generate(self, job: Job, *, script_text: str) -> SubtitleArtifact:
         path = job.workspace.subtitles_srt
+        text = script_text.replace("\n", " ")
+        mid = max(1, len(text) // 2)
+        part1 = text[:mid].strip()
+        part2 = text[mid:].strip()
         path.write_text(
-            "1\n00:00:00,000 --> 00:00:01,000\n"
-            + script_text.replace("\n", " ")
-            + "\n",
+            "1\n00:00:00,000 --> 00:00:00,600\n" + part1 + "\n\n"
+            "2\n00:00:00,600 --> 00:00:01,200\n" + part2 + "\n",
             encoding="utf-8",
         )
         return SubtitleArtifact(path=path, format="srt")
@@ -146,3 +149,7 @@ def test_pipeline_end_to_end_ffmpeg(tmp_path: Path) -> None:
     assert job.artifacts.video is not None
     assert job.artifacts.video.path.exists()
     assert job.artifacts.video.path.stat().st_size > 0
+
+    cues = job.workspace.subtitles_srt.read_text(encoding="utf-8").split("\n\n")
+    cue_count = len([b for b in cues if b.strip()])
+    assert cue_count > 1

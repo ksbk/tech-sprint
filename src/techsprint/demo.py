@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 from techsprint.domain.artifacts import AudioArtifact, ScriptArtifact, SubtitleArtifact
 from techsprint.domain.job import Job
@@ -29,11 +30,62 @@ def edge_tts_available() -> bool:
     return True
 
 
-def _write_simple_srt(path: Path, text: str) -> None:
-    path.write_text(
-        "1\n00:00:00,000 --> 00:00:05,000\n" + text.replace("\n", " ") + "\n",
-        encoding="utf-8",
-    )
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\\s+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _chunk_words(text: str, target_words: int = 12) -> list[str]:
+    words = text.split()
+    if not words:
+        return []
+    chunks = []
+    for i in range(0, len(words), target_words):
+        chunks.append(" ".join(words[i:i + target_words]))
+    return chunks
+
+
+def _format_srt_time(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0.0
+    ms = int(round((seconds - int(seconds)) * 1000))
+    total_seconds = int(seconds)
+    h = total_seconds // 3600
+    m = (total_seconds % 3600) // 60
+    s = total_seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _write_demo_srt(path: Path, text: str, duration: float) -> int:
+    min_cue = 0.6
+    sentences = _split_sentences(text)
+    if len(sentences) <= 1:
+        chunks = _chunk_words(text)
+    else:
+        chunks = sentences
+
+    if not chunks:
+        chunks = [text.strip() or "Demo"]
+
+    max_chunks = max(1, int(duration // min_cue))
+    if len(chunks) > max_chunks:
+        words = text.split()
+        if words:
+            chunk_size = max(1, (len(words) + max_chunks - 1) // max_chunks)
+            chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+
+    cue_duration = duration / len(chunks)
+    lines: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        start = (idx - 1) * cue_duration
+        end = min(duration, idx * cue_duration)
+        lines.append(str(idx))
+        lines.append(f"{_format_srt_time(start)} --> {_format_srt_time(end)}")
+        lines.append(chunk.replace("\n", " "))
+        lines.append("")
+
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return len(chunks)
 
 
 def _ensure_background(job: Job) -> Path:
@@ -104,7 +156,15 @@ class DemoAudioService:
 class DemoSubtitleService:
     def generate(self, job: Job, *, script_text: str) -> SubtitleArtifact:
         path = job.workspace.subtitles_srt
-        _write_simple_srt(path, script_text)
+        audio_duration = ffmpeg.probe_duration(job.workspace.audio_mp3)
+        bg_duration = None
+        if job.settings.background_video:
+            bg_duration = ffmpeg.probe_duration(job.settings.background_video)
+        if audio_duration and bg_duration:
+            duration = min(audio_duration, bg_duration)
+        else:
+            duration = audio_duration or bg_duration or 5.0
+        _write_demo_srt(path, script_text, duration)
         return SubtitleArtifact(path=path, format="srt")
 
 

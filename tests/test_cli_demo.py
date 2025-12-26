@@ -18,6 +18,7 @@ def test_cli_demo_creates_output(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(demo, "edge_tts_available", lambda: False)
     monkeypatch.setattr(ffmpeg, "ensure_ffmpeg", lambda: None)
+    monkeypatch.setattr(ffmpeg, "probe_duration", lambda _: 5.0)
     monkeypatch.setattr(ffmpeg, "run_ffmpeg", fake_run_ffmpeg)
 
     runner = CliRunner()
@@ -27,6 +28,10 @@ def test_cli_demo_creates_output(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0
     outputs = list(workdir.glob("*/final.mp4"))
     assert outputs
+    srt_files = list(workdir.glob("*/captions.srt"))
+    assert srt_files
+    cue_count = len([b for b in srt_files[0].read_text().split("\n\n") if b.strip()])
+    assert cue_count > 1
 
 
 def test_cli_make_demo_flag_creates_output(monkeypatch, tmp_path: Path) -> None:
@@ -40,6 +45,7 @@ def test_cli_make_demo_flag_creates_output(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(demo, "edge_tts_available", lambda: False)
     monkeypatch.setattr(ffmpeg, "ensure_ffmpeg", lambda: None)
+    monkeypatch.setattr(ffmpeg, "probe_duration", lambda _: 5.0)
     monkeypatch.setattr(ffmpeg, "run_ffmpeg", fake_run_ffmpeg)
 
     runner = CliRunner()
@@ -49,6 +55,10 @@ def test_cli_make_demo_flag_creates_output(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0
     outputs = list(workdir.glob("*/final.mp4"))
     assert outputs
+    srt_files = list(workdir.glob("*/captions.srt"))
+    assert srt_files
+    cue_count = len([b for b in srt_files[0].read_text().split("\n\n") if b.strip()])
+    assert cue_count > 1
 
 
 def test_cli_run_demo_alias_creates_output(monkeypatch, tmp_path: Path) -> None:
@@ -62,6 +72,7 @@ def test_cli_run_demo_alias_creates_output(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(demo, "edge_tts_available", lambda: False)
     monkeypatch.setattr(ffmpeg, "ensure_ffmpeg", lambda: None)
+    monkeypatch.setattr(ffmpeg, "probe_duration", lambda _: 5.0)
     monkeypatch.setattr(ffmpeg, "run_ffmpeg", fake_run_ffmpeg)
 
     runner = CliRunner()
@@ -71,3 +82,7 @@ def test_cli_run_demo_alias_creates_output(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0
     outputs = list(workdir.glob("*/final.mp4"))
     assert outputs
+    srt_files = list(workdir.glob("*/captions.srt"))
+    assert srt_files
+    cue_count = len([b for b in srt_files[0].read_text().split("\n\n") if b.strip()])
+    assert cue_count > 1
