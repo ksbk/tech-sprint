@@ -1,4 +1,4 @@
-from techsprint.core.workspace import Workspace
+from techsprint.domain.workspace import Workspace
 
 
 def test_workspace_paths(tmp_path):

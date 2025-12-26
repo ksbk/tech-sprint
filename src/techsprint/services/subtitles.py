@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Optional
 
-from techsprint.core.artifacts import SubtitleArtifact
-from techsprint.core.job import Job
+from techsprint.domain.artifacts import SubtitleArtifact
+from techsprint.domain.job import Job
 from techsprint.utils.logging import get_logger
 
 log = get_logger(__name__)

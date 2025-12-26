@@ -3,14 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from techsprint.core.artifacts import (
+from techsprint.domain.artifacts import (
     AudioArtifact,
     ScriptArtifact,
     SubtitleArtifact,
     VideoArtifact,
 )
-from techsprint.core.job import Job
-from techsprint.core.workspace import Workspace
+from techsprint.domain.job import Job
+from techsprint.domain.workspace import Workspace
 from techsprint.pipeline import Pipeline
 from techsprint.config.settings import Settings
 
@@ -51,8 +51,8 @@ class FakeSubtitleService:
         return SubtitleArtifact(path=path, format="srt")
 
 @dataclass
-class FakeVideoService:
-    def render(self, job: Job) -> VideoArtifact:
+class FakeComposeService:
+    def render(self, job: Job, *, render=None) -> VideoArtifact:
         path = job.workspace.output_mp4
         path.write_bytes(b"FAKE_MP4_BYTES")
         return VideoArtifact(path=path, format="mp4")
@@ -69,7 +69,7 @@ def test_pipeline_unit_end_to_end(tmp_path: Path) -> None:
         script=FakeScriptService(),      # type: ignore[arg-type]
         audio=FakeAudioService(),        # type: ignore[arg-type]
         subtitles=FakeSubtitleService(), # type: ignore[arg-type]
-        video=FakeVideoService(),        # type: ignore[arg-type]
+        compose=FakeComposeService(),    # type: ignore[arg-type]
     )
 
     # prompt is ignored by fake script; keep signature compatible

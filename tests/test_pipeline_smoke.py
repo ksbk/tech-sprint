@@ -4,11 +4,12 @@ import os
 from pathlib import Path
 
 import pytest
+from openai import AuthenticationError
 
 from techsprint.anchors.tech import TechAnchor
 from techsprint.config.settings import Settings
-from techsprint.core.job import Job
-from techsprint.core.workspace import Workspace
+from techsprint.domain.job import Job
+from techsprint.domain.workspace import Workspace
 
 @pytest.mark.integration
 def test_integration_runs_when_env_present(tmp_path: Path) -> None:
@@ -37,7 +38,10 @@ def test_integration_runs_when_env_present(tmp_path: Path) -> None:
     job = Job(settings=settings, workspace=ws)
 
     anchor = TechAnchor()
-    job = anchor.run(job)
+    try:
+        job = anchor.run(job)
+    except AuthenticationError:
+        pytest.skip("Invalid TECHSPRINT_OPENAI_API_KEY")
 
     assert job.artifacts.video is not None
     assert job.artifacts.video.path.exists()

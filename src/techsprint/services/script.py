@@ -27,8 +27,8 @@ from typing import Protocol
 
 
 import os
-from techsprint.core.artifacts import ScriptArtifact
-from techsprint.core.job import Job
+from techsprint.domain.artifacts import ScriptArtifact
+from techsprint.domain.job import Job
 from techsprint.prompts.base import PromptSpec
 from techsprint.utils.logging import get_logger
 # ---------------------------------------------------------------------

@@ -7,7 +7,7 @@ The pipeline executes a single end-to-end build:
 2) Generate script (LLM)
 3) Generate audio (voice)
 4) Generate subtitles (SRT)
-5) Render final video
+5) Compose final video
 
 Responsibilities:
 - Coordinate service execution order
@@ -22,13 +22,14 @@ Does NOT:
 
 from __future__ import annotations
 
-from techsprint.core.artifacts import Artifacts
-from techsprint.core.job import Job
+from techsprint.domain.artifacts import Artifacts
+from techsprint.domain.job import Job
+from techsprint.renderers.base import RenderSpec
+from techsprint.services.audio import AudioService, create_audio_service
+from techsprint.services.compose import ComposeService
 from techsprint.services.news import NewsService
 from techsprint.services.script import ScriptService, create_script_service
-from techsprint.services.audio import AudioService, create_audio_service
 from techsprint.services.subtitles import SubtitleService, create_subtitle_service
-from techsprint.services.video import VideoService
 
 
 class Pipeline:
@@ -48,13 +49,15 @@ class Pipeline:
         script: ScriptService | None = None,
         audio: AudioService | None = None,
         subtitles: SubtitleService | None = None,
-        video: VideoService | None = None,
+        compose: ComposeService | None = None,
+        render: RenderSpec | None = None,
     ) -> None:
         self.news = news or NewsService()
-        self.script = script          # may be None → created per-run
-        self.audio = audio            # may be None → created per-run
-        self.subtitles = subtitles    # may be None → created per-run
-        self.video = video or VideoService()
+        self.script = script  # may be None → created per-run
+        self.audio = audio  # may be None → created per-run
+        self.subtitles = subtitles  # may be None → created per-run
+        self.compose = compose or ComposeService()
+        self.render = render  # optional renderer profile/spec
 
     def run(self, job: Job, prompt) -> Job:
         """
@@ -68,43 +71,46 @@ class Pipeline:
             The same Job instance with populated Artifacts.
         """
 
-        # 1. Fetch news
-        bundle = self.news.fetch(
+        # Initialize artifacts early so partial failures still leave state behind.
+        job.artifacts = Artifacts()
+
+        # 1) Fetch news
+        news_bundle = self.news.fetch(
             job.settings.rss_url,
             job.settings.max_items,
         )
 
-        # 2. Script generation (LLM)
+        # 2) Script generation (LLM)
         script_service = self.script or create_script_service(job)
-        script_art = script_service.generate(
+        script_artifact = script_service.generate(
             job,
             prompt=prompt,
-            headlines=bundle.as_headlines(),
+            headlines=news_bundle.as_headlines(),
         )
+        job.artifacts.script = script_artifact
 
-        # 3. Audio generation (domain-level abstraction)
+        # 3) Audio generation
         audio_service = self.audio or create_audio_service()
-        audio_art = audio_service.generate(
+        audio_artifact = audio_service.generate(
             job,
-            text=script_art.text,
+            text=script_artifact.text,
         )
+        job.artifacts.audio = audio_artifact
 
-        # 4. Subtitle generation (ASR or fallback)
+        # 4) Subtitle generation (ASR or fallback)
         subtitle_service = self.subtitles or create_subtitle_service(job)
-        subtitle_art = subtitle_service.generate(
+        subtitle_artifact = subtitle_service.generate(
             job,
-            script_text=script_art.text,
+            script_text=script_artifact.text,
         )
+        job.artifacts.subtitles = subtitle_artifact
 
-        # 5. Video rendering
-        video_art = self.video.render(job)
+        # 5) Compose final video
+        # If your ComposeService doesn't accept `render=...` yet, keep the call as `.render(job)`.
+        try:
+            video_artifact = self.compose.render(job, render=self.render)
+        except TypeError:
+            video_artifact = self.compose.render(job)
 
-        # Finalize artifacts
-        job.artifacts = Artifacts(
-            script=script_art,
-            audio=audio_art,
-            subtitles=subtitle_art,
-            video=video_art,
-        )
-
+        job.artifacts.video = video_artifact
         return job

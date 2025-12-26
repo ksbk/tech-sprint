@@ -5,8 +5,9 @@ import typer
 
 from techsprint.anchors import ANCHORS, list_anchors
 from techsprint.config.settings import Settings
-from techsprint.core.job import Job
-from techsprint.core.workspace import Workspace
+from techsprint.domain.job import Job
+from techsprint.domain.workspace import Workspace
+from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
 from techsprint.utils.logging import configure_logging, get_logger
 
 app = typer.Typer(add_completion=False)
@@ -34,6 +35,10 @@ def make(
     log_level: str = typer.Option(None, help="Log level (overrides config)."),
     background_video: str = typer.Option(None, help="Background video path (overrides config)."),
     burn_subtitles: bool = typer.Option(None, help="Burn subtitles into video (overrides config)."),
+    render: str = typer.Option(
+        None,
+        help="Render profile (tiktok, reels, youtube-shorts).",
+    ),
 ) -> None:
     """Run the pipeline once."""
     settings = Settings()
@@ -48,6 +53,23 @@ def make(
     if burn_subtitles is not None:
         settings.burn_subtitles = burn_subtitles
 
+    render_map = {
+        "tiktok": TIKTOK,
+        "reels": REELS,
+        "youtube-shorts": YOUTUBE_SHORTS,
+        "youtube": YOUTUBE_SHORTS,
+        "yt": YOUTUBE_SHORTS,
+    }
+    render_spec = None
+    if render is not None:
+        render_key = render.strip().lower()
+        if render_key not in render_map:
+            valid = "tiktok, reels, youtube-shorts, youtube, yt"
+            raise typer.BadParameter(
+                f"Unknown render '{render}'. Use one of: {valid}."
+            )
+        render_spec = render_map[render_key]
+
     # Configure logging after overrides so we use the final resolved level
     effective_level = log_level or settings.log_level
     configure_logging(effective_level)
@@ -59,7 +81,7 @@ def make(
     job = Job(settings=settings, workspace=workspace)
 
     anchor_cls = ANCHORS[settings.anchor]
-    anchor_obj = anchor_cls()
+    anchor_obj = anchor_cls(render=render_spec)
     job = anchor_obj.run(job)
 
     out = job.artifacts.video.path if job.artifacts.video else None
