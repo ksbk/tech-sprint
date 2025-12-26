@@ -23,6 +23,8 @@ venv/
 .env
 .env.*
 !.env.example
+.secrets
+.secrets/
 
 # -------------------------------------------------
 # TechSprint runtime outputs (generated)
@@ -31,6 +33,8 @@ venv/
 outputs/
 dist/
 build/
+node_modules/
+assets/background.mp4
 
 # -------------------------------------------------
 # OS / editor noise
