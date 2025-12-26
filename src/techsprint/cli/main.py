@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 import typer
 
@@ -16,8 +18,6 @@ from techsprint.utils.doctor import run_doctor
 from techsprint.utils.logging import configure_logging, get_logger
 
 app = typer.Typer(add_completion=False)
-run_app = typer.Typer(add_completion=False)
-app.add_typer(run_app, name="runs")
 log = get_logger(__name__)
 
 def _load_edge_tts():
@@ -109,8 +109,31 @@ def _list_runs(workdir: Path) -> list[Path]:
         if not manifest.exists():
             continue
         candidates.append(run_dir)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates.sort(key=lambda p: (p / "run.json").stat().st_mtime, reverse=True)
     return candidates
+
+
+def _resolve_run_dir(workdir: Path, run_id: str) -> Path:
+    if run_id == "latest":
+        runs_list = _list_runs(workdir)
+        if not runs_list:
+            raise typer.BadParameter("No runs found.")
+        return runs_list[0]
+    return workdir / run_id
+
+
+def _open_path(path: Path) -> bool:
+    if sys.platform.startswith("darwin"):
+        cmd = ["open", str(path)]
+    elif sys.platform.startswith("win"):
+        cmd = ["cmd", "/c", "start", "", str(path)]
+    else:
+        cmd = ["xdg-open", str(path)]
+    try:
+        proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except FileNotFoundError:
+        return False
+    return proc.returncode == 0
 
 
 def _collect_cli_overrides(
@@ -146,23 +169,23 @@ def config() -> None:
     s = Settings()
     typer.echo(json.dumps(s.to_public_dict(), indent=2))
 
-@run_app.callback(invoke_without_command=True)
+@app.command()
 def runs(
-    ctx: typer.Context,
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
-    limit: int = typer.Option(10, help="Limit number of runs shown."),
+    limit: int = typer.Option(5, help="Limit number of runs shown."),
 ) -> None:
     """List recent runs."""
-    if ctx.invoked_subcommand is not None:
-        return
     root = _resolve_workdir(workdir)
     runs_list = _list_runs(root)
     if limit is not None and limit > 0:
         runs_list = runs_list[:limit]
 
-    typer.echo("run_id\tduration_s\tvideo")
+    typer.echo("run_id\tstarted_at\tduration_s\tvideo_present\tpath")
     for run_dir in runs_list:
-        manifest = _load_run_manifest(run_dir / "run.json") or {}
+        manifest = _load_run_manifest(run_dir / "run.json")
+        if not manifest:
+            continue
+        started_at = manifest.get("started_at", "n/a")
         duration = manifest.get("duration_seconds_total")
         duration_str = f"{duration:.2f}" if isinstance(duration, (float, int)) else "n/a"
         video_path = None
@@ -170,35 +193,46 @@ def runs(
             video_path = manifest.get("artifacts", {}).get("video", {}).get("path")
         except AttributeError:
             video_path = None
-        video_present = "yes" if video_path and Path(video_path).exists() else "no"
-        typer.echo(f"{run_dir.name}\t{duration_str}\t{video_present}")
+        video_present = "true" if video_path and Path(video_path).exists() else "false"
+        typer.echo(f"{run_dir.name}\t{started_at}\t{duration_str}\t{video_present}\t{run_dir}")
 
 
-@run_app.command("latest")
-def runs_latest(
-    workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
-) -> None:
-    """Print the latest run directory path."""
-    root = _resolve_workdir(workdir)
-    runs_list = _list_runs(root)
-    if not runs_list:
-        typer.echo("No runs found.")
-        return
-    typer.echo(str(runs_list[0]))
-
-
-@run_app.command("inspect")
-def runs_inspect(
-    run_id: str = typer.Argument(..., help="Run id to inspect."),
+@app.command()
+def inspect(
+    run_id: str = typer.Argument(..., help="Run id or 'latest'."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
 ) -> None:
     """Pretty-print run.json for a run."""
     root = _resolve_workdir(workdir)
-    manifest_path = root / run_id / "run.json"
+    run_dir = _resolve_run_dir(root, run_id)
+
+    manifest_path = run_dir / "run.json"
     manifest = _load_run_manifest(manifest_path)
     if manifest is None:
-        raise typer.BadParameter(f"run.json not found for run_id '{run_id}'.")
+        raise typer.BadParameter(f"run.json not found for run_id '{run_dir.name}'.")
     typer.echo(json.dumps(manifest, indent=2))
+
+
+@app.command()
+def open(
+    run_id: str = typer.Argument(..., help="Run id or 'latest'."),
+    workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
+) -> None:
+    """Open the final.mp4 with the OS default app."""
+    root = _resolve_workdir(workdir)
+    run_dir = _resolve_run_dir(root, run_id)
+    manifest = _load_run_manifest(run_dir / "run.json") or {}
+    video_path = None
+    try:
+        video_path = manifest.get("artifacts", {}).get("video", {}).get("path")
+    except AttributeError:
+        video_path = None
+    video_path = Path(video_path) if video_path else run_dir / "final.mp4"
+    if not video_path.exists():
+        raise typer.BadParameter(f"final.mp4 not found for run_id '{run_dir.name}'.")
+
+    if not _open_path(video_path):
+        typer.echo(str(video_path))
 
 
 @app.command()

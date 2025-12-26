@@ -7,8 +7,9 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from techsprint.config.settings import Settings
 from types import SimpleNamespace
+from techsprint.config.settings import Settings
+from techsprint import __version__ as techsprint_version
 from techsprint.services.audio import select_voice
 
 
@@ -40,12 +41,7 @@ def _check_writable(path: Path) -> bool:
 
 
 def _get_version() -> str:
-    try:
-        import importlib.metadata
-
-        return importlib.metadata.version("techsprint")
-    except Exception:
-        return "unknown"
+    return techsprint_version or "unknown"
 
 
 def _status_line(ok: bool, label: str, detail: str = "") -> str:

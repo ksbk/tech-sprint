@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from techsprint.domain.artifacts import AudioArtifact, ScriptArtifact, SubtitleArtifact
+from techsprint.exceptions import DependencyMissingError, TechSprintError
 from techsprint.domain.job import Job
 from techsprint.pipeline import Pipeline
 from techsprint.renderers.base import RenderSpec
@@ -164,13 +165,34 @@ class DemoAudioService:
                 _run_async(backend_coro)
             except Exception:
                 log.warning("Demo audio: edge-tts failed; falling back to sine tone.")
-        if not out.exists():
+
+        if out.exists() and out.stat().st_size > 0:
+            return AudioArtifact(path=out, format="mp3")
+
+        if out.exists() and out.stat().st_size == 0:
+            out.unlink()
+
+        try:
             ffmpeg.ensure_ffmpeg()
-            cmd = ffmpeg.build_sine_audio_cmd(str(out))
-            log.info("Demo audio: sine tone -> %s", out)
+        except DependencyMissingError as exc:
+            raise TechSprintError(
+                "ffmpeg not found; demo audio fallback unavailable. "
+                "Install ffmpeg (e.g., `brew install ffmpeg`) to enable "
+                "sine audio generation."
+            ) from exc
+
+        cmd = ffmpeg.build_sine_audio_cmd(str(out))
+        log.info("Demo audio: sine tone -> %s", out)
+        try:
             ffmpeg.run_ffmpeg(cmd)
+        except Exception:
+            if out.exists() and out.stat().st_size == 0:
+                out.unlink()
+            raise
 
         if not out.exists() or out.stat().st_size == 0:
+            if out.exists() and out.stat().st_size == 0:
+                out.unlink()
             raise RuntimeError(f"Demo audio produced no output: {out}")
 
         return AudioArtifact(path=out, format="mp3")

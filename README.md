@@ -44,7 +44,9 @@ techsprint make --demo
 - `techsprint make` – legacy alias for `techsprint run`
 - `techsprint anchors` – list available anchors
 - `techsprint config` – print resolved configuration
-- `techsprint runs` – list recent runs; `techsprint runs latest`; `techsprint runs inspect <run_id>`
+- `techsprint runs` – list recent runs
+- `techsprint inspect latest` – pretty-print the latest run.json
+- `techsprint open latest` – open the latest video in your OS
 
 Language/locale examples:
 

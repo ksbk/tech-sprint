@@ -1121,7 +1121,6 @@ wheels = [
 
 [[package]]
 name = "techsprint"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "edge-tts" },
