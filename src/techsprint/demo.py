@@ -37,12 +37,14 @@ def _write_simple_srt(path: Path, text: str) -> None:
 
 
 def _ensure_background(job: Job) -> Path:
-    bg_path = Path(job.settings.background_video) if job.settings.background_video else None
-    if bg_path is None:
+    min_bytes = 1024
+    if job.settings.background_video:
+        bg_path = Path(job.settings.background_video).expanduser().resolve()
+    else:
         bg_path = job.workspace.path("background.mp4")
         job.settings.background_video = str(bg_path)
 
-    if not bg_path.exists():
+    if not bg_path.exists() or bg_path.stat().st_size < min_bytes:
         ffmpeg.ensure_ffmpeg()
         cmd = ffmpeg.build_background_cmd(str(bg_path))
         log.info("Generating demo background -> %s", bg_path)
