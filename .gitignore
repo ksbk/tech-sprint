@@ -42,3 +42,4 @@ assets/background.mp4
 .DS_Store
 Thumbs.db
 .vscode/.DS_Store
+*.zip
