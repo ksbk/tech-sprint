@@ -113,6 +113,15 @@ def _write_demo_srt(path: Path, text: str, duration: float) -> int:
     return len(chunks)
 
 
+def _estimate_sine_duration(text: str) -> int:
+    normalized = normalize_text(text)
+    char_count = len(normalized.replace(" ", ""))
+    target_cps = 12.0
+    duration = char_count / target_cps if char_count else 8.0
+    duration = max(8.0, min(30.0, duration))
+    return int(round(duration))
+
+
 def _ensure_background(job: Job) -> Path:
     min_bytes = 1024
     if job.settings.background_video:
@@ -194,7 +203,8 @@ class DemoAudioService:
                 "sine audio generation."
             ) from exc
 
-        cmd = ffmpeg.build_sine_audio_cmd(str(out))
+        duration = _estimate_sine_duration(text)
+        cmd = ffmpeg.build_sine_audio_cmd(str(out), duration=duration)
         log.info("Demo audio: sine tone -> %s", out)
         try:
             ffmpeg.run_ffmpeg(cmd)

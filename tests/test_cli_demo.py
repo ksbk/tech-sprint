@@ -104,8 +104,9 @@ def test_cli_demo_offline_runs_qc(monkeypatch, tmp_path: Path) -> None:
         called["force_sine"] = force_sine
         return job
 
-    def fake_run_qc(job, mode: str, render=None):  # noqa: ANN001
+    def fake_run_qc(job, mode: str, render=None, enable_asr: bool = True):  # noqa: ANN001
         called["qc_mode"] = mode
+        called["enable_asr"] = enable_asr
         return {}
 
     monkeypatch.setattr(cli_main, "run_demo", fake_run_demo)
@@ -118,6 +119,7 @@ def test_cli_demo_offline_runs_qc(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert called.get("force_sine") is True
     assert called.get("qc_mode") == "strict"
+    assert called.get("enable_asr") is False
 
 
 def test_cli_run_demo_offline_runs_qc(monkeypatch, tmp_path: Path) -> None:
@@ -130,8 +132,9 @@ def test_cli_run_demo_offline_runs_qc(monkeypatch, tmp_path: Path) -> None:
         called["force_sine"] = force_sine
         return job
 
-    def fake_run_qc(job, mode: str, render=None):  # noqa: ANN001
+    def fake_run_qc(job, mode: str, render=None, enable_asr: bool = True):  # noqa: ANN001
         called["qc_mode"] = mode
+        called["enable_asr"] = enable_asr
         return {}
 
     monkeypatch.setattr(cli_main, "run_demo", fake_run_demo)
@@ -144,3 +147,4 @@ def test_cli_run_demo_offline_runs_qc(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert called.get("force_sine") is True
     assert called.get("qc_mode") == "strict"
+    assert called.get("enable_asr") is False

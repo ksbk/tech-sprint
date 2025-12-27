@@ -452,7 +452,7 @@ def demo(
     if offline:
         from techsprint.utils.qc import run_qc
 
-        run_qc(job, mode="strict", render=render_spec)
+        run_qc(job, mode="strict", render=render_spec, enable_asr=False)
 
     out = job.artifacts.video.path if job.artifacts.video else None
     typer.echo(f"✅ Done. run_id={workspace.run_id}")
@@ -527,7 +527,7 @@ def run(
         if offline:
             from techsprint.utils.qc import run_qc
 
-            run_qc(job, mode="strict", render=render_spec)
+            run_qc(job, mode="strict", render=render_spec, enable_asr=False)
 
         out = job.artifacts.video.path if job.artifacts.video else None
         typer.echo(f"✅ Done. run_id={workspace.run_id}")

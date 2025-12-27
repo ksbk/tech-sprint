@@ -105,7 +105,7 @@ def _transcribe_with_faster_whisper(audio_path: Path) -> dict | None:
         return None
 
 
-def run_qc(job: Job, *, mode: str, render=None) -> dict:
+def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict:
     audio = job.workspace.audio_mp3
     srt = job.workspace.subtitles_srt
     script_text = job.artifacts.script.text if job.artifacts.script else ""
@@ -203,23 +203,26 @@ def run_qc(job: Job, *, mode: str, render=None) -> dict:
             qc["cue_short_percent"] = short_count / len(durations)
             qc["orphan_line_rate"] = orphan_count / len(durations)
 
-    asr = _transcribe_with_faster_whisper(audio)
-    if asr is None:
-        qc["asr"] = "skipped_missing_dependency"
-    else:
-        qc["asr"] = "ok"
-        segments = asr["segments"]
-        word_midpoints = asr.get("word_midpoints") or []
-        asr_text = " ".join(seg.text for seg in segments if getattr(seg, "text", None))
-        qc["text_overlap"] = _token_overlap(script_text, asr_text)
-        cue_midpoints = _midpoints([(start, end) for start, end, _ in cues])
-        if word_midpoints:
-            seg_midpoints = word_midpoints
+    if enable_asr:
+        asr = _transcribe_with_faster_whisper(audio)
+        if asr is None:
+            qc["asr"] = "skipped_missing_dependency"
         else:
-            seg_midpoints = _midpoints([(seg.start, seg.end) for seg in segments])
-        drift = compute_drift(cue_midpoints, seg_midpoints)
-        if drift:
-            qc["drift"] = {"avg_seconds": drift.avg_seconds, "max_seconds": drift.max_seconds}
+            qc["asr"] = "ok"
+            segments = asr["segments"]
+            word_midpoints = asr.get("word_midpoints") or []
+            asr_text = " ".join(seg.text for seg in segments if getattr(seg, "text", None))
+            qc["text_overlap"] = _token_overlap(script_text, asr_text)
+            cue_midpoints = _midpoints([(start, end) for start, end, _ in cues])
+            if word_midpoints:
+                seg_midpoints = word_midpoints
+            else:
+                seg_midpoints = _midpoints([(seg.start, seg.end) for seg in segments])
+            drift = compute_drift(cue_midpoints, seg_midpoints)
+            if drift:
+                qc["drift"] = {"avg_seconds": drift.avg_seconds, "max_seconds": drift.max_seconds}
+    else:
+        qc["asr"] = "skipped_disabled"
 
     if qc["cue_stats"]:
         if qc["cue_stats"]["max_seconds"] > CAPTION_MAX_SECONDS:
