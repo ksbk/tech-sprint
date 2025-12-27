@@ -44,7 +44,7 @@ def _format_srt_time(seconds: float) -> str:
 
 
 MAX_SUBTITLE_LINES = 2
-MAX_CHARS_PER_LINE = 42
+MAX_CHARS_PER_LINE = 36
 HEURISTIC_MAX_CUE_SECONDS = 4.0
 CAPTION_MIN_SECONDS = 1.2
 CAPTION_TARGET_MIN_SECONDS = 1.8
@@ -88,6 +88,34 @@ CAPTION_BAD_FORMS = {
     "warner brothers.": "Warner Bros. Discovery",
     "father -son": "father-son",
 }
+CAPTION_PROPER_NOUNS = {
+    "warner bros discovery": "Warner Bros. Discovery",
+    "warner bros. discovery": "Warner Bros. Discovery",
+    "brothers' discovery": "Warner Bros. Discovery",
+    "brothers discovery": "Warner Bros. Discovery",
+    "warner bros.": "Warner Bros.",
+    "warner bros": "Warner Bros.",
+    "apple": "Apple",
+    "tokyo": "Tokyo",
+}
+CAPTION_DANGLING_WORDS = {
+    "and",
+    "or",
+    "but",
+    "for",
+    "in",
+    "to",
+    "of",
+    "with",
+    "as",
+    "while",
+    "though",
+}
+CAPTION_SUBJECT_PREDECESSORS = {
+    "it",
+    "this",
+    "they",
+}
 
 
 def _split_text_chunks(text: str, *, words_per_chunk: int = 12) -> list[str]:
@@ -119,11 +147,71 @@ def _normalize_caption_text(text: str) -> str:
         if bad in lowered:
             cleaned = re.sub(re.escape(bad), good, cleaned, flags=re.IGNORECASE)
             lowered = cleaned.lower()
+    for term, canonical in CAPTION_PROPER_NOUNS.items():
+        cleaned = re.sub(rf"(?i)\b{re.escape(term)}\b", canonical, cleaned)
     return cleaned
 
 
 def _sanitize_caption_text(text: str) -> str:
     return _normalize_caption_text(text)
+
+
+def _sentence_case(text: str) -> str:
+    if not text:
+        return text
+    chars = list(text)
+    for idx, ch in enumerate(chars):
+        if ch.isalpha():
+            chars[idx] = ch.upper()
+            return "".join(chars)
+    return text
+
+
+def _apply_text_integrity(
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    if not cues:
+        return []
+    merged: list[tuple[float, float, str]] = []
+    i = 0
+    while i < len(cues):
+        start, end, text = cues[i]
+        text = _sanitize_caption_text(text)
+        words = text.split()
+        if not words:
+            i += 1
+            continue
+        first = words[0].lower().strip(",;:.!?")
+        last = words[-1].lower().strip(",;:.!?")
+
+        if first in {"while", "though"} and merged:
+            prev_start, prev_end, prev_text = merged[-1]
+            prev_words = prev_text.split()
+            prev_last = prev_words[-1].lower().strip(",;:.!?") if prev_words else ""
+            if prev_last not in CAPTION_SUBJECT_PREDECESSORS:
+                combined_end = end
+                if combined_end - prev_start <= CAPTION_MAX_SECONDS:
+                    merged[-1] = (prev_start, combined_end, f"{prev_text} {text}".strip())
+                    i += 1
+                    continue
+
+        if last in CAPTION_DANGLING_WORDS and i + 1 < len(cues):
+            next_start, next_end, next_text = cues[i + 1]
+            combined_end = next_end
+            if combined_end - start <= CAPTION_MAX_SECONDS:
+                merged.append((start, combined_end, f"{text} {next_text}".strip()))
+                i += 2
+                continue
+
+        merged.append((start, end, text))
+        i += 1
+
+    finalized: list[tuple[float, float, str]] = []
+    for start, end, text in merged:
+        cleaned = _sanitize_caption_text(text)
+        cleaned = _sentence_case(cleaned)
+        finalized.append((start, end, cleaned))
+    return finalized
 
 
 def _compress_caption_text(text: str) -> str:
@@ -829,31 +917,6 @@ def _postprocess_cues(
                     if prev_end >= last_start:
                         last_start = max(prev_end + 0.02, last_end - CAPTION_MIN_SECONDS)
             hardened[-1] = (last_start, last_end, last_text)
-
-    constrained: list[tuple[float, float, str]] = []
-    for start, end, text in hardened:
-        constrained.extend(
-            _split_cue_for_constraints(
-                start=start,
-                end=end,
-                text=text,
-                audio_duration=audio_duration,
-            )
-        )
-
-    snapped: list[tuple[float, float, str]] = []
-    for start, end, text in constrained:
-        if audio_duration is not None:
-            if start >= audio_duration:
-                continue
-            end = min(end, audio_duration)
-        start = _snap(start)
-        end = _snap(end)
-        if end <= start:
-            continue
-        snapped.append((start, end, text))
-
-    return snapped
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:
