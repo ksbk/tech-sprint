@@ -34,6 +34,7 @@ def _artifact_entry(artifact: Any) -> dict[str, Any] | None:
     cue_count = getattr(artifact, "cue_count", None)
     cue_stats = getattr(artifact, "cue_stats", None)
     asr_split = getattr(artifact, "asr_split", None)
+    integrity_repairs = getattr(artifact, "integrity_repairs", None)
     if source:
         entry["source"] = source
     if segment_count is not None:
@@ -46,6 +47,8 @@ def _artifact_entry(artifact: Any) -> dict[str, Any] | None:
         entry["cue_stats"] = cue_stats
     if asr_split is not None:
         entry["asr_split"] = asr_split
+    if integrity_repairs:
+        entry["integrity_repairs"] = integrity_repairs
     return entry
 
 

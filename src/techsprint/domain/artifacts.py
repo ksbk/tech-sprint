@@ -33,6 +33,7 @@ class SubtitleArtifact:
     asr_split: bool | None = None
     layout_ok: bool | None = None
     layout_bbox: dict | None = None
+    integrity_repairs: list[str] | None = None
 
 
 @dataclass(frozen=True)

@@ -52,6 +52,7 @@ CAPTION_TARGET_MAX_SECONDS = 3.5
 CAPTION_STRONG_PUNCT_MAX_SECONDS = 4.0
 CAPTION_MAX_SECONDS = 6.0
 CAPTION_CPS_MAX = 17
+CAPTION_CPS_TARGET = 16
 CAPTION_CPS_SOFT = 15
 CAPTION_WORDS_MAX = 12
 CAPTION_FRAME_RATE = 30
@@ -86,6 +87,12 @@ CAPTION_BAD_FORMS = {
     "hostel bid": "hostile bid",
     "warner brothers": "Warner Bros. Discovery",
     "warner brothers.": "Warner Bros. Discovery",
+    "warner bros": "Warner Bros. Discovery",
+    "warner bros.": "Warner Bros. Discovery",
+    "brothers' discovery": "Warner Bros. Discovery",
+    "brothers discovery": "Warner Bros. Discovery",
+    "japanese": "Japanese",
+    "apple": "Apple",
     "father -son": "father-son",
 }
 CAPTION_PROPER_NOUNS = {
@@ -97,6 +104,7 @@ CAPTION_PROPER_NOUNS = {
     "warner bros": "Warner Bros.",
     "apple": "Apple",
     "tokyo": "Tokyo",
+    "japanese": "Japanese",
 }
 CAPTION_DANGLING_WORDS = {
     "and",
@@ -122,6 +130,8 @@ CAPTION_DANGLING_TAIL_WORDS = {
     "and",
     "or",
     "but",
+    "as",
+    "from",
 }
 CAPTION_SHORT_OK = {
     "lastly",
@@ -195,7 +205,70 @@ def _dedupe_repeated_words(text: str) -> str:
 
 def _normalize_ellipses(text: str) -> str:
     # Replace 4+ dots with a standard 3-dot ellipsis.
-    return re.sub(r"\.{4,}", "...", text)
+    cleaned = re.sub(r"\.{2,}", "...", text)
+    if cleaned.count("...") > 1:
+        first = cleaned.find("...")
+        cleaned = cleaned[: first + 3] + cleaned[first + 3 :].replace("...", "")
+    return cleaned
+
+
+def _has_verb(text: str) -> bool:
+    words = [w.lower().strip(",;:.!?") for w in text.split() if w.strip()]
+    if not words:
+        return False
+    verbs = {
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "has",
+        "have",
+        "had",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "will",
+        "would",
+        "should",
+        "may",
+        "might",
+    }
+    for word in words:
+        if word in verbs:
+            return True
+        if len(word) > 3 and (word.endswith("ed") or word.endswith("ing")):
+            return True
+    return False
+
+
+def _ends_with_dangling(text: str) -> bool:
+    stripped = text.rstrip()
+    if stripped.endswith(","):
+        return True
+    words = stripped.split()
+    if not words:
+        return False
+    last = words[-1].lower().strip(",;:.!?")
+    return last in CAPTION_DANGLING_TAIL_WORDS
+
+
+def _fix_sentence_punctuation(text: str) -> str:
+    stripped = text.rstrip()
+    if not stripped:
+        return text
+    if stripped.endswith((".", "?", "!")):
+        return stripped
+    return f"{stripped}."
+
+
+def _ends_sentence(text: str) -> bool:
+    stripped = text.rstrip()
+    return stripped.endswith((".", "?", "!", ";", ":", "—"))
 
 
 def _sentence_case(text: str) -> str:
@@ -211,13 +284,20 @@ def _sentence_case(text: str) -> str:
 
 def _apply_text_integrity(
     cues: list[tuple[float, float, str]],
+    *,
+    repairs: list[str] | None = None,
 ) -> list[tuple[float, float, str]]:
     if not cues:
         return []
-    merged: list[tuple[float, float, str]] = []
+    indexed = [
+        {"start": start, "end": end, "text": text, "ids": [idx + 1]}
+        for idx, (start, end, text) in enumerate(cues)
+    ]
+    merged: list[dict] = []
     i = 0
-    while i < len(cues):
-        start, end, text = cues[i]
+    while i < len(indexed):
+        current = indexed[i]
+        start, end, text = current["start"], current["end"], current["text"]
         text = _sanitize_caption_text(text)
         text = _normalize_ellipses(text)
         text = _dedupe_repeated_words(text)
@@ -229,34 +309,81 @@ def _apply_text_integrity(
         last = words[-1].lower().strip(",;:.!?")
         trailing_comma = text.rstrip().endswith(",")
         short_phrase = len(words) < 4 and (text.lower().strip(",;:.!?") not in CAPTION_SHORT_OK)
+        needs_verb = not _has_verb(text)
 
         if first in {"while", "though"} and merged:
-            prev_start, prev_end, prev_text = merged[-1]
+            prev_start, prev_end, prev_text = merged[-1]["start"], merged[-1]["end"], merged[-1]["text"]
             prev_words = prev_text.split()
             prev_last = prev_words[-1].lower().strip(",;:.!?") if prev_words else ""
             if prev_last not in CAPTION_SUBJECT_PREDECESSORS:
                 combined_end = end
                 if combined_end - prev_start <= CAPTION_MAX_SECONDS:
-                    merged[-1] = (prev_start, combined_end, f"{prev_text} {text}".strip())
+                    merged[-1]["end"] = combined_end
+                    merged[-1]["text"] = f"{prev_text} {text}".strip()
+                    merged[-1]["ids"].extend(current["ids"])
+                    if repairs is not None:
+                        repairs.append(f"Merged cues {merged[-1]['ids'][0]}+{current['ids'][-1]}: leading '{first}'")
                     i += 1
                     continue
 
-        if (last in CAPTION_DANGLING_WORDS or last in CAPTION_DANGLING_TAIL_WORDS or trailing_comma or short_phrase) and i + 1 < len(cues):
-            next_start, next_end, next_text = cues[i + 1]
+        if (last in CAPTION_DANGLING_WORDS or _ends_with_dangling(text) or trailing_comma or short_phrase or needs_verb) and i + 1 < len(indexed):
+            next_item = indexed[i + 1]
+            next_start, next_end, next_text = next_item["start"], next_item["end"], next_item["text"]
             combined_end = next_end
             if combined_end - start <= CAPTION_MAX_SECONDS:
-                merged.append((start, combined_end, f"{text} {next_text}".strip()))
+                merged.append(
+                    {
+                        "start": start,
+                        "end": combined_end,
+                        "text": f"{text} {next_text}".strip(),
+                        "ids": current["ids"] + next_item["ids"],
+                    }
+                )
+                if repairs is not None:
+                    if short_phrase:
+                        reason = "fragment"
+                    elif needs_verb:
+                        reason = "no verb"
+                    elif trailing_comma or _ends_with_dangling(text):
+                        reason = "dangling lead-in"
+                    else:
+                        reason = "integrity"
+                    repairs.append(
+                        f"Merged cues {current['ids'][0]}+{next_item['ids'][-1]}: {reason}"
+                    )
                 i += 2
                 continue
 
-        merged.append((start, end, text))
+        if not _ends_sentence(text) and i + 1 < len(indexed):
+            next_item = indexed[i + 1]
+            next_start, next_end, next_text = next_item["start"], next_item["end"], next_item["text"]
+            combined_end = next_end
+            if combined_end - start <= CAPTION_MAX_SECONDS:
+                merged.append(
+                    {
+                        "start": start,
+                        "end": combined_end,
+                        "text": f"{text} {next_text}".strip(),
+                        "ids": current["ids"] + next_item["ids"],
+                    }
+                )
+                if repairs is not None:
+                    repairs.append(
+                        f"Merged cues {current['ids'][0]}+{next_item['ids'][-1]}: sentence continuation"
+                    )
+                i += 2
+                continue
+
+        merged.append({"start": start, "end": end, "text": text, "ids": current["ids"]})
         i += 1
 
     finalized: list[tuple[float, float, str]] = []
-    for start, end, text in merged:
+    for item in merged:
+        start, end, text = item["start"], item["end"], item["text"]
         cleaned = _sanitize_caption_text(text)
         cleaned = _normalize_ellipses(cleaned)
         cleaned = _dedupe_repeated_words(cleaned)
+        cleaned = _fix_sentence_punctuation(cleaned)
         cleaned = _sentence_case(cleaned)
         finalized.append((start, end, cleaned))
     return finalized
@@ -335,7 +462,33 @@ def _split_text_by_parts(text: str, parts: int) -> list[str]:
     if parts <= 1 or len(words) == 1:
         return [" ".join(words)]
     chunk_size = math.ceil(len(words) / parts)
-    chunks = [" ".join(words[i : i + chunk_size]) for i in range(0, len(words), chunk_size)]
+    chunks: list[str] = []
+    idx = 0
+    for _ in range(parts - 1):
+        target = min(len(words) - 1, idx + chunk_size)
+        best = None
+        best_score = None
+        for offset in range(-3, 4):
+            split_at = target + offset
+            if split_at <= idx or split_at >= len(words):
+                continue
+            prev_word = words[split_at - 1]
+            next_word = words[split_at]
+            if _is_forbidden_split(prev_word, next_word):
+                continue
+            strength = _break_strength(prev_word)
+            penalty = abs((split_at - idx) - chunk_size)
+            if _ends_with_dangling(" ".join(words[idx:split_at])):
+                penalty += 5
+            score = penalty - (strength * 3)
+            if best_score is None or score < best_score:
+                best_score = score
+                best = split_at
+        if best is None:
+            best = target
+        chunks.append(" ".join(words[idx:best]))
+        idx = best
+    chunks.append(" ".join(words[idx:]))
     # Avoid a trailing single-word chunk.
     if len(chunks) >= 2 and len(chunks[-1].split()) == 1:
         tail = chunks.pop()
@@ -357,16 +510,20 @@ def _wrap_text_lines(
     if max_lines == 2 and len(words) > 3:
         best_split = None
         best_score = None
+        total_chars = len(" ".join(words))
         for i in range(1, len(words)):
             left = " ".join(words[:i])
             right = " ".join(words[i:])
             if len(left) > max_chars or len(right) > max_chars:
                 continue
+            ratio = len(left) / max(1, total_chars)
             penalty = abs(len(left) - len(right))
             if len(left.split()) <= 2 or len(right.split()) <= 2:
                 penalty += 10
             if _is_forbidden_split(words[i - 1], words[i]):
                 penalty += 8
+            if ratio < 0.4 or ratio > 0.6:
+                penalty += 6
             if best_score is None or penalty < best_score:
                 best_score = penalty
                 best_split = i
@@ -398,6 +555,14 @@ def _wrap_text_lines(
         lines = lines[:max_lines]
     if len(lines) == max_lines and len(lines[-1]) > max_chars:
         lines[-1] = lines[-1][:max_chars].rstrip()
+    if lines:
+        tail = lines[-1].rstrip()
+        if tail and not tail.endswith((".", "?", "!")):
+            if len(tail) >= max_chars:
+                tail = tail[:-1] + "."
+            else:
+                tail = tail + "."
+            lines[-1] = tail
     lines = _fix_line_edges(lines, duration_seconds=duration_seconds)
     return "\n".join(lines)
 
@@ -572,6 +737,7 @@ def _write_srt_from_text(
     text: str,
     duration: float,
     min_cue_s: float = CAPTION_MIN_SECONDS,
+    repairs: list[str] | None = None,
 ) -> None:
     text = _sanitize_caption_text(text)
     chunks = _split_text_chunks(text)
@@ -610,7 +776,7 @@ def _write_srt_from_text(
         current = end
         if current >= duration:
             break
-    cues = _postprocess_cues(cues, audio_duration=duration)
+    cues = _postprocess_cues(cues, audio_duration=duration, repairs=repairs)
     lines: list[str] = []
     for idx, (start, end, chunk) in enumerate(cues, start=1):
         lines.append(str(idx))
@@ -761,6 +927,7 @@ def _postprocess_cues(
     audio_duration: float | None,
     merge_gap_seconds: float = 0.2,
     apply_integrity: bool = True,
+    repairs: list[str] | None = None,
 ) -> list[tuple[float, float, str]]:
     if not cues:
         return []
@@ -818,24 +985,24 @@ def _postprocess_cues(
             if new_cps <= CAPTION_CPS_MAX and new_duration >= CAPTION_MIN_SECONDS - CAPTION_TOLERANCE_SECONDS:
                 split_for_cps.append((start, new_end, text))
                 continue
-        if cps <= CAPTION_CPS_MAX:
+        if cps <= CAPTION_CPS_TARGET:
             split_for_cps.append((start, end, text))
             continue
         compressed = _compress_caption_text(text)
         if compressed and compressed != text:
             text = compressed
             cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_MAX:
+            if cps <= CAPTION_CPS_TARGET:
                 split_for_cps.append((start, end, text))
                 continue
         trimmed = _aggressive_trim_text(text)
         if trimmed and trimmed != text:
             text = trimmed
             cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_MAX:
+            if cps <= CAPTION_CPS_TARGET:
                 split_for_cps.append((start, end, text))
                 continue
-        parts = max(2, math.ceil(cps / CAPTION_CPS_MAX))
+        parts = max(2, math.ceil(cps / CAPTION_CPS_TARGET))
         if parts <= 2 and cps > CAPTION_CPS_MAX:
             parts = 3
         max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
@@ -861,7 +1028,10 @@ def _postprocess_cues(
         duration = end - start
         if duration <= 0:
             continue
-        needed = max(CAPTION_MIN_SECONDS, (len(text.replace(" ", "")) / CAPTION_CPS_MAX) if text else CAPTION_MIN_SECONDS)
+        needed = max(
+            CAPTION_MIN_SECONDS,
+            (len(text.replace(" ", "")) / CAPTION_CPS_TARGET) if text else CAPTION_MIN_SECONDS,
+        )
         target = min(max(needed, CAPTION_TARGET_MIN_SECONDS), CAPTION_MAX_SECONDS)
         if next_start is not None and next_start > start:
             max_end = min(next_start - 0.02, start + CAPTION_MAX_SECONDS)
@@ -920,17 +1090,17 @@ def _postprocess_cues(
             if new_cps <= CAPTION_CPS_MAX and new_duration >= CAPTION_MIN_SECONDS - CAPTION_TOLERANCE_SECONDS:
                 hardened.append((start, new_end, text))
                 continue
-        if cps <= CAPTION_CPS_MAX:
+        if cps <= CAPTION_CPS_TARGET:
             hardened.append((start, end, text))
             continue
         trimmed = _aggressive_trim_text(text)
         if trimmed and trimmed != text:
             text = trimmed
             cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_MAX:
+            if cps <= CAPTION_CPS_TARGET:
                 hardened.append((start, end, text))
                 continue
-        parts = max(2, math.ceil(cps / CAPTION_CPS_MAX))
+        parts = max(2, math.ceil(cps / CAPTION_CPS_TARGET))
         if parts <= 2 and cps > CAPTION_CPS_MAX:
             parts = 3
         max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
@@ -967,14 +1137,23 @@ def _postprocess_cues(
                         last_start = max(prev_end + 0.02, last_end - CAPTION_MIN_SECONDS)
             hardened[-1] = (last_start, last_end, last_text)
     if apply_integrity:
-        hardened = _apply_text_integrity(hardened)
+        hardened = _apply_text_integrity(hardened, repairs=repairs)
         return _postprocess_cues(
             hardened,
             audio_duration=audio_duration,
             merge_gap_seconds=0.0,
             apply_integrity=False,
+            repairs=repairs,
         )
-    return hardened
+    normalized: list[tuple[float, float, str]] = []
+    for start, end, text in hardened:
+        cleaned = _sanitize_caption_text(text)
+        cleaned = _normalize_ellipses(cleaned)
+        cleaned = _dedupe_repeated_words(cleaned)
+        cleaned = _fix_sentence_punctuation(cleaned)
+        cleaned = _sentence_case(cleaned)
+        normalized.append((start, end, cleaned))
+    return normalized
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:
@@ -1171,6 +1350,7 @@ class SubtitleService:
                 lines: list[str] = []
                 idx = 1
                 cues: list[tuple[float, float, str]] = []
+                integrity_repairs: list[str] = []
                 for seg in segments:
                     start = float(seg["start"])
                     end = float(seg["end"])
@@ -1189,7 +1369,12 @@ class SubtitleService:
                         words=seg_words,
                     )
                     cues.extend(seg_cues)
-                cues = _postprocess_cues(cues, audio_duration=audio_duration, merge_gap_seconds=0.0)
+                cues = _postprocess_cues(
+                    cues,
+                    audio_duration=audio_duration,
+                    merge_gap_seconds=0.0,
+                    repairs=integrity_repairs,
+                )
                 for cue_start, cue_end, cue_text in cues:
                     if cue_end <= cue_start:
                         continue
@@ -1210,6 +1395,7 @@ class SubtitleService:
                     cue_count=len(cues),
                     cue_stats=_cue_stats(cues),
                     asr_split=True,
+                    integrity_repairs=integrity_repairs or None,
                 )
 
         if self.backend and audio.exists() and self.mode == "heuristic":
@@ -1226,13 +1412,15 @@ class SubtitleService:
         # Fallback: build SRT from script text using audio duration when available.
         log.warning("Subtitles fallback: generating SRT from script text.")
         duration = ffmpeg.probe_duration(audio) or 8.0
-        _write_srt_from_text(out_path=out, text=script_text, duration=duration)
+        integrity_repairs: list[str] = []
+        _write_srt_from_text(out_path=out, text=script_text, duration=duration, repairs=integrity_repairs)
         return SubtitleArtifact(
             path=out,
             format="srt",
             text_path=text_path,
             text_sha256=subtitle_digest,
             source="heuristic",
+            integrity_repairs=integrity_repairs or None,
         )
 
 

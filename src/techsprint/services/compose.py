@@ -98,6 +98,7 @@ class ComposeService:
                     cue_count=sub.cue_count,
                     cue_stats=sub.cue_stats,
                     asr_split=sub.asr_split,
+                    integrity_repairs=sub.integrity_repairs,
                     layout_ok=layout_ok,
                     layout_bbox=layout_bbox,
                 )

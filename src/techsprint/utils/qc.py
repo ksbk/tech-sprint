@@ -15,10 +15,15 @@ from techsprint.services.subtitles import (
     CAPTION_BAD_FORMS,
     CAPTION_BRACKET_LINE_RE,
     CAPTION_CPS_MAX,
+    CAPTION_CPS_TARGET,
+    CAPTION_DANGLING_TAIL_WORDS,
     CAPTION_FORBIDDEN_TOKENS,
     CAPTION_MAX_SECONDS,
     CAPTION_MIN_SECONDS,
     CAPTION_METADATA_RE,
+    _has_verb,
+    _normalize_ellipses,
+    _sentence_case,
     MAX_CHARS_PER_LINE,
     MAX_SUBTITLE_LINES,
 )
@@ -159,6 +164,9 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
             cps = len(text.replace(" ", "")) / duration if text else 0.0
             cps_values.append(cps)
             lines = [line for line in text.split("\n") if line.strip()]
+            normalized_text = _normalize_ellipses(text)
+            if normalized_text != text:
+                violations.append({"cue": idx, "rule": "ellipsis_spam"})
             if len(lines) == 2:
                 word_counts = [len(line.split()) for line in lines]
                 short_orphan = any(len(line.split()) == 1 and len(line.strip()) <= 3 for line in lines)
@@ -177,8 +185,21 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
                 violations.append({"cue": idx, "rule": "min_duration"})
             if duration > CAPTION_MAX_SECONDS:
                 violations.append({"cue": idx, "rule": "max_duration"})
+            if cps > CAPTION_CPS_TARGET:
+                violations.append({"cue": idx, "rule": "cps_target", "cps": round(cps, 2)})
             if cps > CAPTION_CPS_MAX:
                 violations.append({"cue": idx, "rule": "max_cps", "cps": round(cps, 2)})
+            if text and text.rstrip().endswith(","):
+                violations.append({"cue": idx, "rule": "dangling_comma"})
+            last_word = text.split()[-1].lower().strip(",;:.!?") if text.split() else ""
+            if last_word in CAPTION_DANGLING_TAIL_WORDS:
+                violations.append({"cue": idx, "rule": "dangling_tail"})
+            if len(text.split()) < 4 and not _has_verb(text):
+                violations.append({"cue": idx, "rule": "fragment_no_verb"})
+            if _sentence_case(text) != text:
+                violations.append({"cue": idx, "rule": "sentence_case"})
+            if text and not text.rstrip().endswith((".", "?", "!")):
+                violations.append({"cue": idx, "rule": "end_punctuation"})
             if CAPTION_METADATA_RE.search(text):
                 violations.append({"cue": idx, "rule": "metadata_tokens", "text": text})
             if CAPTION_BRACKET_LINE_RE.match(text.strip()):
