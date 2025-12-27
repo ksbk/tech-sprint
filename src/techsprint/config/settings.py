@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         default="en-US",
         description="Locale for language/voice selection (e.g. en-US, fr-FR).",
     )
+    subtitles_mode: str = Field(
+        default="auto",
+        description="Subtitle generation mode: auto, asr, or heuristic.",
+    )
 
     # ------------------------------------------------------------------
     # News
@@ -88,6 +92,10 @@ class Settings(BaseSettings):
         default=True,
         description="Whether subtitles should be burned into the video.",
     )
+    subtitle_layout_strict: bool = Field(
+        default=False,
+        description="Fail rendering if subtitle layout exceeds safe-area constraints.",
+    )
 
     # ------------------------------------------------------------------
     # Logging
@@ -110,6 +118,7 @@ class Settings(BaseSettings):
             "anchor": self.anchor,
             "language": self.language,
             "locale": self.locale,
+            "subtitles_mode": self.subtitles_mode,
             "rss_url": self.rss_url,
             "max_items": self.max_items,
             "model": self.model,
@@ -118,5 +127,6 @@ class Settings(BaseSettings):
             "voice": self.voice,
             "background_video": self.background_video,
             "burn_subtitles": self.burn_subtitles,
+            "subtitle_layout_strict": self.subtitle_layout_strict,
             "log_level": self.log_level,
         }

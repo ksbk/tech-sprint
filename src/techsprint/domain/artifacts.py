@@ -15,12 +15,24 @@ class ScriptArtifact:
 class AudioArtifact:
     path: Path
     format: str = "mp3"
+    text_path: Path | None = None
+    text_sha256: str | None = None
 
 
 @dataclass(frozen=True)
 class SubtitleArtifact:
     path: Path
     format: str = "srt"
+    text_path: Path | None = None
+    text_sha256: str | None = None
+    source: str | None = None
+    segment_count: int | None = None
+    segment_stats: dict | None = None
+    cue_count: int | None = None
+    cue_stats: dict | None = None
+    asr_split: bool | None = None
+    layout_ok: bool | None = None
+    layout_bbox: dict | None = None
 
 
 @dataclass(frozen=True)

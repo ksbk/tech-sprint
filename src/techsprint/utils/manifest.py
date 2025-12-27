@@ -21,7 +21,32 @@ def _artifact_entry(artifact: Any) -> dict[str, Any] | None:
         return None
     path = Path(artifact.path)
     size = path.stat().st_size if path.exists() else None
-    return {"path": str(path), "size_bytes": size}
+    entry = {"path": str(path), "size_bytes": size}
+    text_path = getattr(artifact, "text_path", None)
+    text_sha = getattr(artifact, "text_sha256", None)
+    if text_path:
+        entry["text_path"] = str(text_path)
+    if text_sha:
+        entry["text_sha256"] = text_sha
+    source = getattr(artifact, "source", None)
+    segment_count = getattr(artifact, "segment_count", None)
+    segment_stats = getattr(artifact, "segment_stats", None)
+    cue_count = getattr(artifact, "cue_count", None)
+    cue_stats = getattr(artifact, "cue_stats", None)
+    asr_split = getattr(artifact, "asr_split", None)
+    if source:
+        entry["source"] = source
+    if segment_count is not None:
+        entry["segment_count"] = segment_count
+    if segment_stats:
+        entry["segment_stats"] = segment_stats
+    if cue_count is not None:
+        entry["cue_count"] = cue_count
+    if cue_stats:
+        entry["cue_stats"] = cue_stats
+    if asr_split is not None:
+        entry["asr_split"] = asr_split
+    return entry
 
 
 def _find_repo_root(start: Path) -> Path | None:
@@ -81,6 +106,36 @@ def _probe_media(path: Path) -> dict[str, Any] | None:
     return info
 
 
+def _subtitle_end_seconds(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    end_time = None
+    for block in path.read_text(encoding="utf-8", errors="ignore").split("\n\n"):
+        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        timing = lines[1] if len(lines) > 1 and "-->" in lines[1] else (lines[0] if "-->" in lines[0] else None)
+        if not timing:
+            continue
+        parts = [p.strip() for p in timing.split("-->")]
+        if len(parts) != 2:
+            continue
+        end = _parse_srt_time(parts[1])
+        if end is None:
+            continue
+        end_time = end
+    return end_time
+
+
+def _parse_srt_time(value: str) -> float | None:
+    try:
+        hms, ms = value.split(",")
+        h, m, s = hms.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+    except Exception:
+        return None
+
+
 def write_run_manifest(
     *,
     job: Job,
@@ -92,6 +147,18 @@ def write_run_manifest(
     artifacts = job.artifacts
     video_path = artifacts.video.path if artifacts.video else None
     media_probe = _probe_media(Path(video_path)) if video_path else None
+    audio_duration = ffmpeg.probe_duration(job.workspace.audio_mp3)
+    video_duration = ffmpeg.probe_duration(job.workspace.output_mp4)
+    subtitles_end = _subtitle_end_seconds(job.workspace.subtitles_srt)
+    av_delta = abs(video_duration - audio_duration) if audio_duration and video_duration else None
+    subtitle_delta = (
+        abs(subtitles_end - audio_duration) if audio_duration is not None and subtitles_end is not None else None
+    )
+    subtitle_layout_ok = None
+    subtitle_bbox = None
+    if artifacts.subtitles:
+        subtitle_layout_ok = getattr(artifacts.subtitles, "layout_ok", None)
+        subtitle_bbox = getattr(artifacts.subtitles, "layout_bbox", None)
 
     payload: dict[str, Any] = {
         "run_id": job.workspace.run_id,
@@ -111,6 +178,15 @@ def write_run_manifest(
             "video": _artifact_entry(artifacts.video),
         },
         "media_probe": media_probe,
+        "audio_duration_seconds": audio_duration,
+        "subtitles_end_seconds": subtitles_end,
+        "av_delta_seconds": av_delta,
+        "subtitle_delta_seconds": subtitle_delta,
+        "subtitle_layout_ok": subtitle_layout_ok,
+        "computed_subtitle_bbox_px": subtitle_bbox,
+        "ffmpeg_cmd": getattr(job, "ffmpeg_cmd", None),
+        "ffmpeg_stderr_path": getattr(job, "ffmpeg_stderr_path", None),
+        "run_log_path": getattr(job, "run_log_path", None),
     }
 
     out = job.workspace.run_manifest

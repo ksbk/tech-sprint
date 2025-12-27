@@ -19,7 +19,7 @@ class DummyJob:
 def _capture_cmd(monkeypatch, output_path: Path) -> dict[str, list[str]]:
     calls: dict[str, list[str]] = {}
 
-    def fake_run(cmd: list[str]) -> None:
+    def fake_run(cmd: list[str], *, stderr_path=None) -> None:
         calls["cmd"] = cmd
         output_path.write_bytes(b"0")
 
@@ -58,7 +58,8 @@ def test_compose_default_render_uses_settings(monkeypatch, tmp_path: Path) -> No
 
     assert "-vf" in cmd
     vf = cmd[cmd.index("-vf") + 1]
-    assert f"subtitles={workspace.subtitles_srt}" in vf
+    assert "ass=" in vf
+    assert "captions.ass" in vf
     assert "scale=" not in vf
     assert "fps=" not in vf
 
@@ -92,4 +93,38 @@ def test_compose_custom_render_spec_controls_filters(monkeypatch, tmp_path: Path
     vf = cmd[cmd.index("-vf") + 1]
     assert "scale=1080:1920" in vf
     assert "fps=30" in vf
-    assert f"subtitles={workspace.subtitles_srt}" in vf
+    assert "ass=" in vf
+    assert "captions.ass" in vf
+    assert "force_style=" not in vf
+
+
+def test_compose_loops_and_trims_to_audio(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings()
+    settings.workdir = str(tmp_path / ".techsprint")
+    settings.burn_subtitles = False
+
+    workspace = Workspace.create(settings.workdir, run_id="loop")
+    job = DummyJob(settings=settings, workspace=workspace)
+
+    bg_path = tmp_path / "bg.mp4"
+    bg_path.write_bytes(b"bg")
+    settings.background_video = str(bg_path)
+
+    workspace.audio_mp3.write_bytes(b"audio")
+
+    def fake_probe(path):
+        if Path(path) == bg_path:
+            return 1.0
+        if Path(path) == workspace.audio_mp3:
+            return 3.0
+        return None
+
+    calls = _capture_cmd(monkeypatch, workspace.output_mp4)
+    monkeypatch.setattr(ffmpeg, "probe_duration", fake_probe)
+    ComposeService().render(job)
+
+    cmd = calls["cmd"]
+    assert "-stream_loop" in cmd
+    assert "-shortest" not in cmd
+    t_index = cmd.index("-t")
+    assert cmd[t_index + 1] == "3.000"

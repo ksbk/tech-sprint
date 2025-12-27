@@ -38,6 +38,8 @@ def test_cli_run_invokes_anchor(monkeypatch, tmp_path: Path) -> None:
             "fr",
             "--locale",
             "fr-FR",
+            "--qc",
+            "off",
         ],
     )
 

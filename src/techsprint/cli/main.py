@@ -14,6 +14,7 @@ from techsprint.domain.job import Job
 from techsprint.domain.workspace import Workspace
 from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
 from techsprint.renderers.base import RenderSpec
+from techsprint.utils import ffmpeg
 from techsprint.utils.doctor import run_doctor
 from techsprint.utils.logging import configure_logging, get_logger
 
@@ -56,6 +57,7 @@ def _run_demo_pipeline(
     *,
     settings: Settings,
     render_spec: RenderSpec | None,
+    force_sine: bool = False,
     cli_overrides: dict[str, str] | None = None,
 ) -> tuple[Job, Workspace]:
     workspace = Workspace.create(settings.workdir)
@@ -64,7 +66,7 @@ def _run_demo_pipeline(
         workspace=workspace,
         cli_overrides=cli_overrides or {},
     )
-    job = run_demo(job, render=render_spec)
+    job = run_demo(job, render=render_spec, force_sine=force_sine)
     return job, workspace
 
 def _parse_render(render: str | None) -> RenderSpec | None:
@@ -122,6 +124,19 @@ def _resolve_run_dir(workdir: Path, run_id: str) -> Path:
     return workdir / run_id
 
 
+def _render_from_id(renderer_id: str | None) -> RenderSpec | None:
+    if renderer_id is None:
+        return None
+    renderer_key = renderer_id.replace("_", "-").lower()
+    if renderer_key == "tiktok":
+        return TIKTOK
+    if renderer_key == "reels":
+        return REELS
+    if renderer_key in {"youtube-shorts", "youtube"}:
+        return YOUTUBE_SHORTS
+    return None
+
+
 def _open_path(path: Path) -> bool:
     if sys.platform.startswith("darwin"):
         cmd = ["open", str(path)]
@@ -143,6 +158,9 @@ def _collect_cli_overrides(
     voice: str | None = None,
     render_spec: RenderSpec | None = None,
     render_raw: str | None = None,
+    qc: str | None = None,
+    subtitles: str | None = None,
+    offline: bool | None = None,
 ) -> dict[str, str]:
     overrides: dict[str, str] = {}
     if language is not None:
@@ -153,6 +171,12 @@ def _collect_cli_overrides(
         overrides["voice"] = voice
     if render_raw is not None and render_spec is not None:
         overrides["render"] = render_spec.name
+    if qc is not None and qc != "off":
+        overrides["qc"] = qc
+    if subtitles is not None:
+        overrides["subtitles"] = subtitles
+    if offline:
+        overrides["offline"] = "true"
     return overrides
 
 
@@ -233,6 +257,32 @@ def open(
 
     if not _open_path(video_path):
         typer.echo(str(video_path))
+
+
+@app.command("debug-frame")
+def debug_frame(
+    run_id: str = typer.Argument(..., help="Run id or 'latest'."),
+    workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
+    seconds: float = typer.Option(0.5, help="Timestamp for debug frame."),
+) -> None:
+    """Render a debug frame with safe-area overlay and subtitles."""
+    root = _resolve_workdir(workdir)
+    run_dir = _resolve_run_dir(root, run_id)
+    manifest = _load_run_manifest(run_dir / "run.json") or {}
+    video_path = None
+    try:
+        video_path = manifest.get("artifacts", {}).get("video", {}).get("path")
+    except AttributeError:
+        video_path = None
+    video_path = Path(video_path) if video_path else run_dir / "final.mp4"
+    if not video_path.exists():
+        raise typer.BadParameter(f"final.mp4 not found for run_id '{run_dir.name}'.")
+
+    render_spec = _render_from_id(manifest.get("renderer_id"))
+    out_path = run_dir / "debug_frame.png"
+    cmd = ffmpeg.build_debug_frame_cmd(video_path, out_path, seconds=seconds, render=render_spec)
+    ffmpeg.run_ffmpeg(cmd)
+    typer.echo(f"🧪 Debug frame: {out_path}")
 
 
 @app.command()
@@ -361,6 +411,10 @@ def demo(
     log_level: str = typer.Option(None, help="Log level (overrides config)."),
     language: str = typer.Option(None, help="Language code (overrides config)."),
     locale: str = typer.Option(None, help="Locale code (overrides config)."),
+    offline: bool = typer.Option(
+        False,
+        help="Run demo offline (sine audio + strict QC).",
+    ),
     render: str = typer.Option(
         None,
         help="Render profile (tiktok, reels, youtube-shorts).",
@@ -374,6 +428,8 @@ def demo(
         settings.language = language
     if locale is not None:
         settings.locale = locale
+    if offline:
+        settings.subtitles_mode = "heuristic"
 
     effective_level = log_level or settings.log_level
     configure_logging(effective_level)
@@ -384,12 +440,19 @@ def demo(
         locale=locale,
         render_spec=render_spec,
         render_raw=render,
+        offline=offline,
     )
     job, workspace = _run_demo_pipeline(
         settings=settings,
         render_spec=render_spec,
+        force_sine=offline,
         cli_overrides=cli_overrides,
     )
+
+    if offline:
+        from techsprint.utils.qc import run_qc
+
+        run_qc(job, mode="strict", render=render_spec)
 
     out = job.artifacts.video.path if job.artifacts.video else None
     typer.echo(f"✅ Done. run_id={workspace.run_id}")
@@ -409,14 +472,29 @@ def run(
     log_level: str = typer.Option(None, help="Log level (overrides config)."),
     language: str = typer.Option(None, help="Language code (overrides config)."),
     locale: str = typer.Option(None, help="Locale code (overrides config)."),
+    offline: bool = typer.Option(
+        False,
+        help="Run demo offline (sine audio + strict QC).",
+    ),
     background_video: str = typer.Option(None, help="Background video path (overrides config)."),
     burn_subtitles: bool = typer.Option(None, help="Burn subtitles into video (overrides config)."),
+    subtitles: str = typer.Option(
+        None,
+        help="Subtitle mode: auto, asr, heuristic.",
+    ),
     render: str = typer.Option(
         None,
         help="Render profile (tiktok, reels, youtube-shorts).",
     ),
+    qc: str = typer.Option(
+        "off",
+        help="QC mode: off, warn, strict.",
+    ),
 ) -> None:
     """Run the pipeline (or demo with --demo)."""
+    if offline and not demo_mode:
+        raise typer.BadParameter("Use --offline with --demo.")
+
     if demo_mode:
         settings = Settings()
         if workdir is not None:
@@ -425,6 +503,8 @@ def run(
             settings.language = language
         if locale is not None:
             settings.locale = locale
+        if offline:
+            settings.subtitles_mode = "heuristic"
 
         effective_level = log_level or settings.log_level
         configure_logging(effective_level)
@@ -435,12 +515,19 @@ def run(
             locale=locale,
             render_spec=render_spec,
             render_raw=render,
+            offline=offline,
         )
         job, workspace = _run_demo_pipeline(
             settings=settings,
             render_spec=render_spec,
+            force_sine=offline,
             cli_overrides=cli_overrides,
         )
+
+        if offline:
+            from techsprint.utils.qc import run_qc
+
+            run_qc(job, mode="strict", render=render_spec)
 
         out = job.artifacts.video.path if job.artifacts.video else None
         typer.echo(f"✅ Done. run_id={workspace.run_id}")
@@ -461,6 +548,8 @@ def run(
         settings.background_video = background_video
     if burn_subtitles is not None:
         settings.burn_subtitles = burn_subtitles
+    if subtitles is not None:
+        settings.subtitles_mode = subtitles
 
     effective_level = log_level or settings.log_level
     configure_logging(effective_level)
@@ -471,12 +560,21 @@ def run(
         locale=locale,
         render_spec=render_spec,
         render_raw=render,
+        qc=qc,
+        subtitles=subtitles,
     )
     job, workspace = _run_anchor_pipeline(
         settings=settings,
         render_spec=render_spec,
         cli_overrides=cli_overrides,
     )
+
+    if qc not in {"off", "warn", "strict"}:
+        raise typer.BadParameter("Invalid --qc. Use: off, warn, strict.")
+    if qc != "off":
+        from techsprint.utils.qc import run_qc
+
+        run_qc(job, mode=qc, render=render_spec)
 
     out = job.artifacts.video.path if job.artifacts.video else None
     typer.echo(f"✅ Done. run_id={workspace.run_id}")

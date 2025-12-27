@@ -27,6 +27,7 @@ from typing import Protocol
 
 
 import os
+import re
 from techsprint.domain.artifacts import ScriptArtifact
 from techsprint.domain.job import Job
 from techsprint.prompts.base import PromptSpec
@@ -34,12 +35,24 @@ from techsprint.utils.logging import get_logger
 # ---------------------------------------------------------------------
 # LLM Client Protocol (keeps OpenAI isolated & mockable)
 # ---------------------------------------------------------------------
+def _sanitize_script(text: str) -> str:
+    # Remove bracketed stage directions: (...) or [...]
+    stripped = re.sub(r"\([^)]*\)|\[[^\]]*\]", "", text)
+    lines = []
+    for line in stripped.splitlines():
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        line = re.sub(r"\s+([.,!?;:])", r"\1", line)
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 class StubScriptService:
     """
     Stub implementation for script generation. Always returns a canned script.
     """
     def generate(self, job, *, prompt, headlines):
         text = "This is a stub script for pipeline testing."
+        text = _sanitize_script(text)
         path = job.workspace.script_txt
         path.write_text(text, encoding="utf-8")
         log.info("[STUB] Script written to %s (%d chars)", path, len(text))
@@ -129,6 +142,8 @@ class ScriptService:
             temperature=job.settings.temperature,
             max_tokens=job.settings.max_tokens,
         )
+
+        text = _sanitize_script(text)
 
         if not text.strip():
             raise RuntimeError("LLM returned empty script text")

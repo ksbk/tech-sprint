@@ -11,8 +11,10 @@ from techsprint.pipeline import Pipeline
 from techsprint.renderers.base import RenderSpec
 from techsprint.services.audio import EdgeTTSBackend, select_voice
 from techsprint.services.compose import ComposeService
+from techsprint.services.subtitles import SubtitleService
 from techsprint.utils import ffmpeg
 from techsprint.utils.logging import get_logger
+from techsprint.utils.text import normalize_text, sha256_text
 
 log = get_logger(__name__)
 
@@ -80,7 +82,7 @@ def _format_srt_time(seconds: float) -> str:
 
 
 def _write_demo_srt(path: Path, text: str, duration: float) -> int:
-    min_cue = 0.6
+    min_cue = 1.2
     sentences = _split_sentences(text)
     if len(sentences) <= 1:
         chunks = _chunk_words(text)
@@ -149,11 +151,17 @@ class DemoScriptService:
 
 @dataclass
 class DemoAudioService:
+    force_sine: bool = False
+
     def generate(self, job: Job, *, text: str) -> AudioArtifact:
         out = job.workspace.audio_mp3
         voice = select_voice(job)
+        normalized_text = normalize_text(text)
+        text_path = job.workspace.audio_text_txt
+        text_path.write_text(normalized_text, encoding="utf-8")
+        text_sha = sha256_text(normalized_text)
 
-        if edge_tts_available():
+        if edge_tts_available() and not self.force_sine:
             try:
                 backend = EdgeTTSBackend()
                 log.info("Demo audio: edge-tts -> %s", out)
@@ -167,7 +175,12 @@ class DemoAudioService:
                 log.warning("Demo audio: edge-tts failed; falling back to sine tone.")
 
         if out.exists() and out.stat().st_size > 0:
-            return AudioArtifact(path=out, format="mp3")
+            return AudioArtifact(
+                path=out,
+                format="mp3",
+                text_path=text_path,
+                text_sha256=text_sha,
+            )
 
         if out.exists() and out.stat().st_size == 0:
             out.unlink()
@@ -195,7 +208,12 @@ class DemoAudioService:
                 out.unlink()
             raise RuntimeError(f"Demo audio produced no output: {out}")
 
-        return AudioArtifact(path=out, format="mp3")
+        return AudioArtifact(
+            path=out,
+            format="mp3",
+            text_path=text_path,
+            text_sha256=text_sha,
+        )
 
 
 @dataclass
@@ -225,14 +243,19 @@ def _run_async(coro):
         return loop.create_task(coro)
 
 
-def run_demo(job: Job, *, render: RenderSpec | None = None) -> Job:
+def run_demo(
+    job: Job,
+    *,
+    render: RenderSpec | None = None,
+    force_sine: bool = False,
+) -> Job:
     _ensure_background(job)
 
     pipeline = Pipeline(
         news=DemoNewsService(),          # type: ignore[arg-type]
         script=DemoScriptService(),      # type: ignore[arg-type]
-        audio=DemoAudioService(),        # type: ignore[arg-type]
-        subtitles=DemoSubtitleService(), # type: ignore[arg-type]
+        audio=DemoAudioService(force_sine=force_sine),  # type: ignore[arg-type]
+        subtitles=SubtitleService(backend=None, mode=job.settings.subtitles_mode),
         compose=ComposeService(),
         render=render,
     )

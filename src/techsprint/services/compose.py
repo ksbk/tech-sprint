@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from techsprint.domain.artifacts import VideoArtifact
 from techsprint.renderers.base import RenderSpec
+from techsprint.exceptions import TechSprintError
 from techsprint.utils import ffmpeg
 from techsprint.utils.logging import get_logger
 
@@ -67,6 +68,59 @@ class ComposeService:
 
         burn_subtitles = render.burn_subtitles if render is not None else job.settings.burn_subtitles
         subtitles_path = str(subs) if burn_subtitles and subs.exists() else None
+        subtitles_force_style = True
+
+        layout_ok = None
+        layout_bbox = None
+        ass_path = None
+        if burn_subtitles:
+            from techsprint.services.subtitles import MAX_CHARS_PER_LINE, MAX_SUBTITLE_LINES
+
+            layout_ok, layout_bbox = ffmpeg.subtitle_layout_ok(
+                render=render,
+                max_lines=MAX_SUBTITLE_LINES,
+                max_chars_per_line=MAX_CHARS_PER_LINE,
+            )
+            if not layout_ok:
+                log.warning("Subtitle layout exceeds safe area; bbox=%s", layout_bbox)
+                if job.settings.subtitle_layout_strict:
+                    raise TechSprintError("Subtitle layout exceeds safe area constraints.")
+
+            artifacts = getattr(job, "artifacts", None)
+            if artifacts and artifacts.subtitles:
+                sub = artifacts.subtitles
+                artifacts.subtitles = type(sub)(
+                    path=sub.path,
+                    format=sub.format,
+                    text_path=sub.text_path,
+                    text_sha256=sub.text_sha256,
+                    source=sub.source,
+                    segment_count=sub.segment_count,
+                    segment_stats=sub.segment_stats,
+                    cue_count=sub.cue_count,
+                    cue_stats=sub.cue_stats,
+                    asr_split=sub.asr_split,
+                    layout_ok=layout_ok,
+                    layout_bbox=layout_bbox,
+                )
+
+            if subtitles_path:
+                ass_path = job.workspace.path("captions.ass")
+                ffmpeg.write_ass_from_srt(
+                    Path(subtitles_path),
+                    ass_path,
+                    render=render,
+                    max_subtitle_lines=MAX_SUBTITLE_LINES,
+                    max_chars_per_line=MAX_CHARS_PER_LINE,
+                )
+                subtitles_path = str(ass_path)
+                subtitles_force_style = False
+
+        audio_duration = ffmpeg.probe_duration(audio)
+        bg_duration = ffmpeg.probe_duration(bg_path)
+        loop_background = False
+        if audio_duration and bg_duration:
+            loop_background = audio_duration > (bg_duration + 0.05)
 
         cmd = ffmpeg.build_compose_cmd(
             str(bg_path),
@@ -74,12 +128,25 @@ class ComposeService:
             subtitles_path,
             str(out),
             render=render,
+            duration_seconds=audio_duration,
+            loop_background=loop_background,
+            max_subtitle_lines=MAX_SUBTITLE_LINES if burn_subtitles else None,
+            max_chars_per_line=MAX_CHARS_PER_LINE if burn_subtitles else None,
+            subtitles_force_style=subtitles_force_style,
         )
 
         log.info("Rendering video -> %s", out)
-        log.debug("ffmpeg cmd: %s", " ".join(cmd))
+        cmd_str = " ".join(cmd)
+        log.debug("ffmpeg cmd: %s", cmd_str)
 
-        ffmpeg.run_ffmpeg(cmd)
+        run_log = job.workspace.path("run.log")
+        run_log.write_text(f"ffmpeg_cmd: {cmd_str}\n", encoding="utf-8")
+        stderr_path = job.workspace.path("ffmpeg.stderr.txt")
+        job.ffmpeg_cmd = cmd_str
+        job.ffmpeg_stderr_path = str(stderr_path)
+        job.run_log_path = str(run_log)
+
+        ffmpeg.run_ffmpeg(cmd, stderr_path=stderr_path)
 
         if not out.exists() or out.stat().st_size == 0:
             raise RuntimeError(f"ffmpeg produced no output: {out}")

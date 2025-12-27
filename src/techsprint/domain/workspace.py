@@ -49,3 +49,15 @@ class Workspace:
     @property
     def run_manifest(self) -> Path:
         return self.path("run.json")
+
+    @property
+    def audio_text_txt(self) -> Path:
+        return self.path("audio_text.txt")
+
+    @property
+    def subtitles_text_txt(self) -> Path:
+        return self.path("subtitles_text.txt")
+
+    @property
+    def qc_report_json(self) -> Path:
+        return self.path("qc_report.json")

@@ -29,6 +29,7 @@ from typing import Protocol
 from techsprint.domain.artifacts import AudioArtifact
 from techsprint.domain.job import Job
 from techsprint.utils import ffmpeg
+from techsprint.utils.text import normalize_text, sha256_text
 from techsprint.utils.logging import get_logger
 
 log = get_logger(__name__)
@@ -116,6 +117,10 @@ class AudioService:
     def generate(self, job: Job, *, text: str) -> AudioArtifact:
         voice = select_voice(job)
         out = job.workspace.audio_mp3
+        normalized_text = normalize_text(text)
+        text_path = job.workspace.audio_text_txt
+        text_path.write_text(normalized_text, encoding="utf-8")
+        text_sha = sha256_text(normalized_text)
 
         log.info("Generating audio (mp3) voice=%s -> %s", voice, out)
 
@@ -142,7 +147,12 @@ class AudioService:
         if not out.exists() or out.stat().st_size == 0:
             raise RuntimeError(f"Audio generation produced no output: {out}")
 
-        return AudioArtifact(path=out, format="mp3")
+        return AudioArtifact(
+            path=out,
+            format="mp3",
+            text_path=text_path,
+            text_sha256=text_sha,
+        )
 
 
 

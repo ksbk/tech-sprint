@@ -1,0 +1,47 @@
+{
+  "mode": "strict",
+  "audio_duration": 54.336,
+  "srt_cue_count": 13,
+  "srt_span_ok": true,
+  "cue_stats": {
+    "min_seconds": 1.945999999999998,
+    "max_seconds": 5.6129999999999995,
+    "avg_seconds": 4.167846153846154
+  },
+  "cue_cps_max": 16.818181818181824,
+  "cue_median_seconds": 4.680000000000003,
+  "cue_short_percent": 0.0,
+  "cue_changes_per_10s": 2.392520612485277,
+  "orphan_line_rate": 0.0,
+  "subtitle_start_seconds": 0.0,
+  "subtitle_end_seconds": 54.316,
+  "av_delta_seconds": 0.03066700000000111,
+  "subtitle_delta_seconds": 0.01999999999999602,
+  "text_overlap": 0.9509803921568627,
+  "drift": {
+    "avg_seconds": 0.11199999999999898,
+    "max_seconds": 0.305499999999995
+  },
+  "asr": "ok",
+  "warnings": [],
+  "subtitle_layout_ok": true,
+  "subtitle_layout_bbox": {
+    "width": 862,
+    "height": 87,
+    "margin_v": 192,
+    "margin_l": 108,
+    "margin_r": 108,
+    "font_size": 34,
+    "outline": 3,
+    "shadow": 1,
+    "max_lines": 2,
+    "max_chars_per_line": 42,
+    "frame_width": 1080,
+    "frame_height": 1920
+  },
+  "frames": {
+    "frame_0_5": "/Users/ksb/dev/tech-sprint/.techsprint/6d230829f62a/frame_0_5.png",
+    "frame_mid": "/Users/ksb/dev/tech-sprint/.techsprint/6d230829f62a/frame_mid.png"
+  },
+  "violations": []
+}

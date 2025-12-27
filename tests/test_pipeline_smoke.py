@@ -18,6 +18,8 @@ def test_integration_runs_when_env_present(tmp_path: Path) -> None:
 
     Skips automatically unless required env vars + background video exist.
     """
+    if not os.getenv("TECHSPRINT_LIVE_TESTS"):
+        pytest.skip("Set TECHSPRINT_LIVE_TESTS=1 to run live integration.")
     api_key = os.getenv("TECHSPRINT_OPENAI_API_KEY")
     bg = os.getenv("TECHSPRINT_BACKGROUND_VIDEO")
 

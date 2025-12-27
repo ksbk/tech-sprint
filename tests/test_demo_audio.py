@@ -27,7 +27,7 @@ def test_demo_audio_missing_ffmpeg_removes_empty_file(
 
     monkeypatch.setattr(demo, "edge_tts_available", lambda: False)
     monkeypatch.setattr(ffmpeg, "ensure_ffmpeg", lambda: (_ for _ in ()).throw(DependencyMissingError("ffmpeg")))
-    monkeypatch.setattr(ffmpeg, "run_ffmpeg", lambda _cmd: None)
+    monkeypatch.setattr(ffmpeg, "run_ffmpeg", lambda _cmd, stderr_path=None: None)
 
     service = DemoAudioService()
     with pytest.raises(TechSprintError, match="ffmpeg not found"):

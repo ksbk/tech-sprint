@@ -13,6 +13,9 @@ class Job:
     workspace: Workspace
     artifacts: Artifacts = field(default_factory=Artifacts)
     cli_overrides: dict[str, str] = field(default_factory=dict)
+    ffmpeg_cmd: str | None = None
+    ffmpeg_stderr_path: str | None = None
+    run_log_path: str | None = None
 
     def with_artifacts(self, artifacts: Artifacts) -> "Job":
         self.artifacts = artifacts
