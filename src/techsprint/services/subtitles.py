@@ -111,6 +111,32 @@ CAPTION_DANGLING_WORDS = {
     "while",
     "though",
 }
+CAPTION_DANGLING_TAIL_WORDS = {
+    "raising",
+    "including",
+    "aiming",
+    "to",
+    "in",
+    "for",
+    "with",
+    "and",
+    "or",
+    "but",
+}
+CAPTION_SHORT_OK = {
+    "lastly",
+    "finally",
+    "next",
+    "also",
+    "meanwhile",
+    "okay",
+    "ok",
+    "yes",
+    "no",
+    "right",
+    "thanks",
+    "thank you",
+}
 CAPTION_SUBJECT_PREDECESSORS = {
     "it",
     "this",
@@ -156,6 +182,22 @@ def _sanitize_caption_text(text: str) -> str:
     return _normalize_caption_text(text)
 
 
+def _dedupe_repeated_words(text: str) -> str:
+    # Collapse exact repeated words and repeated tail sequences (1-3 words).
+    cleaned = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
+    words = cleaned.split()
+    for n in (3, 2, 1):
+        if len(words) >= n * 2 and [w.lower() for w in words[-n:]] == [w.lower() for w in words[-2 * n : -n]]:
+            words = words[:-n]
+            break
+    return " ".join(words)
+
+
+def _normalize_ellipses(text: str) -> str:
+    # Replace 4+ dots with a standard 3-dot ellipsis.
+    return re.sub(r"\.{4,}", "...", text)
+
+
 def _sentence_case(text: str) -> str:
     if not text:
         return text
@@ -177,12 +219,16 @@ def _apply_text_integrity(
     while i < len(cues):
         start, end, text = cues[i]
         text = _sanitize_caption_text(text)
+        text = _normalize_ellipses(text)
+        text = _dedupe_repeated_words(text)
         words = text.split()
         if not words:
             i += 1
             continue
         first = words[0].lower().strip(",;:.!?")
         last = words[-1].lower().strip(",;:.!?")
+        trailing_comma = text.rstrip().endswith(",")
+        short_phrase = len(words) < 4 and (text.lower().strip(",;:.!?") not in CAPTION_SHORT_OK)
 
         if first in {"while", "though"} and merged:
             prev_start, prev_end, prev_text = merged[-1]
@@ -195,7 +241,7 @@ def _apply_text_integrity(
                     i += 1
                     continue
 
-        if last in CAPTION_DANGLING_WORDS and i + 1 < len(cues):
+        if (last in CAPTION_DANGLING_WORDS or last in CAPTION_DANGLING_TAIL_WORDS or trailing_comma or short_phrase) and i + 1 < len(cues):
             next_start, next_end, next_text = cues[i + 1]
             combined_end = next_end
             if combined_end - start <= CAPTION_MAX_SECONDS:
@@ -209,6 +255,8 @@ def _apply_text_integrity(
     finalized: list[tuple[float, float, str]] = []
     for start, end, text in merged:
         cleaned = _sanitize_caption_text(text)
+        cleaned = _normalize_ellipses(cleaned)
+        cleaned = _dedupe_repeated_words(cleaned)
         cleaned = _sentence_case(cleaned)
         finalized.append((start, end, cleaned))
     return finalized
@@ -712,6 +760,7 @@ def _postprocess_cues(
     *,
     audio_duration: float | None,
     merge_gap_seconds: float = 0.2,
+    apply_integrity: bool = True,
 ) -> list[tuple[float, float, str]]:
     if not cues:
         return []
@@ -917,6 +966,15 @@ def _postprocess_cues(
                     if prev_end >= last_start:
                         last_start = max(prev_end + 0.02, last_end - CAPTION_MIN_SECONDS)
             hardened[-1] = (last_start, last_end, last_text)
+    if apply_integrity:
+        hardened = _apply_text_integrity(hardened)
+        return _postprocess_cues(
+            hardened,
+            audio_duration=audio_duration,
+            merge_gap_seconds=0.0,
+            apply_integrity=False,
+        )
+    return hardened
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:

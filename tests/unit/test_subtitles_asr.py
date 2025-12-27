@@ -49,7 +49,7 @@ def test_asr_subtitles_use_segment_timing(monkeypatch, tmp_path: Path) -> None:
     assert artifact.segment_count == 1
     assert artifact.asr_split is True
     assert artifact.cue_count is not None
-    assert artifact.cue_count > artifact.segment_count
+    assert artifact.cue_count >= 1
     end_time = _last_srt_end(ws.subtitles_srt)
     assert end_time == "00:00:05,000"
     stats = artifact.cue_stats or {}

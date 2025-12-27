@@ -18,3 +18,14 @@ def test_apply_text_integrity_merges_dangling_and_fixes_case() -> None:
     assert len(merged) == 2
     assert merged[0][2].startswith("To the test in Tokyo")
     assert merged[1][2].startswith("It works")
+
+
+def test_apply_text_integrity_dedupes_and_merges_fragments() -> None:
+    cues = [
+        (0.0, 1.5, "Discovery Discovery"),
+        (1.5, 3.0, "in Tokyo,"),
+        (3.0, 5.0, "launches today."),
+    ]
+    merged = _apply_text_integrity(cues)
+    assert len(merged) == 2
+    assert merged[0][2].startswith("Discovery in Tokyo")
