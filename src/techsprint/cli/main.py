@@ -15,7 +15,7 @@ from techsprint.domain.workspace import Workspace
 from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
 from techsprint.renderers.base import RenderSpec
 from techsprint.utils import ffmpeg
-from techsprint.utils.doctor import run_doctor
+from techsprint.utils.diagnostics import run_doctor
 from techsprint.utils.logging import configure_logging, get_logger
 
 app = typer.Typer(add_completion=False)
