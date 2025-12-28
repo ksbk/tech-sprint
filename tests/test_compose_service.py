@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from techsprint.config.settings import Settings
+from techsprint.domain.artifacts import SubtitleArtifact
+from techsprint.domain.job import Job
 from techsprint.domain.workspace import Workspace
+from techsprint.exceptions import TechSprintError
 from techsprint.renderers.base import RenderSpec
 from techsprint.services.compose import ComposeService
 from techsprint.utils import ffmpeg
@@ -140,3 +145,43 @@ def test_compose_loops_and_trims_to_audio(monkeypatch, tmp_path: Path) -> None:
     assert "-shortest" not in cmd
     t_index = cmd.index("-t")
     assert cmd[t_index + 1] == "3.000"
+
+
+def test_strict_layout_records_metadata_before_failure(monkeypatch, tmp_path: Path) -> None:
+    settings = Settings()
+    settings.workdir = str(tmp_path / ".techsprint")
+    settings.subtitle_layout_strict = True
+
+    workspace = Workspace.create(settings.workdir, run_id="strict")
+    job = Job(settings=settings, workspace=workspace)
+    job.artifacts.subtitles = SubtitleArtifact(path=workspace.subtitles_srt)
+
+    workspace.audio_mp3.write_bytes(b"audio")
+    workspace.subtitles_srt.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nHello world\n",
+        encoding="utf-8",
+    )
+
+    render = RenderSpec(
+        name="tiny",
+        width=100,
+        height=100,
+        fps=30,
+        burn_subtitles=True,
+        safe_area_top_pct=0.45,
+        safe_area_bottom_pct=0.45,
+        safe_area_left_pct=0.45,
+        safe_area_right_pct=0.45,
+    )
+
+    monkeypatch.setattr(ffmpeg, "ensure_ffmpeg", lambda: None)
+    monkeypatch.setattr(ffmpeg, "probe_duration", lambda *_args, **_kwargs: 1.0)
+    monkeypatch.setattr(ffmpeg, "write_ass_from_srt", lambda *a, **k: workspace.path("captions.ass"))
+    monkeypatch.setattr(ffmpeg, "build_compose_cmd", lambda *a, **k: ["echo", "ffmpeg"])
+    monkeypatch.setattr(ffmpeg, "run_ffmpeg", lambda *a, **k: None)
+
+    with pytest.raises(TechSprintError):
+        ComposeService().render(job, render=render)
+
+    assert job.artifacts.subtitles.layout_ok is False
+    assert job.artifacts.subtitles.layout_bbox is not None

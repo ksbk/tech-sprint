@@ -62,8 +62,10 @@ def test_subtitle_layout_bbox_fits_safe_area() -> None:
         max_chars_per_line=MAX_CHARS_PER_LINE,
     )
     assert ok is True
-    assert bbox["margin_l"] >= int(bbox["frame_width"] * 0.10)
-    assert bbox["margin_v"] >= int(bbox["frame_height"] * 0.10)
+    assert bbox["margin_l"] >= int(render.width * render.safe_area_left_pct)
+    assert bbox["margin_r"] >= int(render.width * render.safe_area_right_pct)
+    assert bbox["margin_v"] >= int(render.height * render.safe_area_bottom_pct)
+    assert bbox["margin_top"] >= int(render.height * render.safe_area_top_pct)
 
 
 def test_subtitle_filter_alignment_and_margins() -> None:
@@ -82,6 +84,41 @@ def test_subtitle_filter_alignment_and_margins() -> None:
     assert "MarginL=" in value
     assert "MarginR=" in value
     assert "\\," in value
+
+
+def test_renderer_subtitle_filter_uses_safe_area() -> None:
+    from techsprint.renderers.tiktok import TIKTOK
+    from techsprint.services.subtitles import MAX_CHARS_PER_LINE, MAX_SUBTITLE_LINES
+
+    value = ffmpeg.build_subtitles_filter(
+        "captions.srt",
+        render=TIKTOK,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+
+    bottom = int(TIKTOK.height * TIKTOK.safe_area_bottom_pct)
+    left = int(TIKTOK.width * TIKTOK.safe_area_left_pct)
+    right = int(TIKTOK.width * TIKTOK.safe_area_right_pct)
+
+    assert f"MarginV={bottom}" in value
+    assert f"MarginL={left}" in value
+    assert f"MarginR={right}" in value
+
+
+def test_youtube_renderer_has_specific_safe_area() -> None:
+    from techsprint.renderers.youtube import YOUTUBE_SHORTS
+    from techsprint.services.subtitles import MAX_CHARS_PER_LINE, MAX_SUBTITLE_LINES
+
+    value = ffmpeg.build_subtitles_filter(
+        "captions.srt",
+        render=YOUTUBE_SHORTS,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+
+    bottom = int(YOUTUBE_SHORTS.height * YOUTUBE_SHORTS.safe_area_bottom_pct)
+    assert f"MarginV={bottom}" in value
 
 
 def test_ass_filter_path_uses_ass_filter() -> None:

@@ -81,10 +81,6 @@ class ComposeService:
                 max_lines=MAX_SUBTITLE_LINES,
                 max_chars_per_line=MAX_CHARS_PER_LINE,
             )
-            if not layout_ok:
-                log.warning("Subtitle layout exceeds safe area; bbox=%s", layout_bbox)
-                if job.settings.subtitle_layout_strict:
-                    raise TechSprintError("Subtitle layout exceeds safe area constraints.")
 
             artifacts = getattr(job, "artifacts", None)
             if artifacts and artifacts.subtitles:
@@ -103,6 +99,11 @@ class ComposeService:
                     layout_ok=layout_ok,
                     layout_bbox=layout_bbox,
                 )
+
+            if not layout_ok:
+                log.warning("Subtitle layout exceeds safe area; bbox=%s", layout_bbox)
+                if job.settings.subtitle_layout_strict:
+                    raise TechSprintError("Subtitle layout exceeds safe area constraints.")
 
             if subtitles_path:
                 ass_path = job.workspace.path("captions.ass")
