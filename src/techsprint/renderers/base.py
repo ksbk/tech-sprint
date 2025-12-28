@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
@@ -12,3 +14,11 @@ class RenderSpec:
     safe_area_bottom_pct: float = 0.10
     safe_area_left_pct: float = 0.10
     safe_area_right_pct: float = 0.10
+    subtitle_font: str | None = None
+    subtitle_bold: bool = False
+    subtitle_outline_px: int | None = None
+    subtitle_shadow_px: int | None = None
+    subtitle_margin_top_px: int | None = None
+    subtitle_margin_bottom_px: int | None = None
+    subtitle_margin_left_px: int | None = None
+    subtitle_margin_right_px: int | None = None
