@@ -160,11 +160,15 @@ def build_subtitles_filter(
 def safe_area_margins(render: RenderSpec | None = None) -> dict[str, int]:
     width = render.width if render else 1080
     height = render.height if render else 1920
-    inset = 0.10
+    top_pct = render.safe_area_top_pct if render else 0.10
+    bottom_pct = render.safe_area_bottom_pct if render else 0.10
+    left_pct = render.safe_area_left_pct if render else 0.10
+    right_pct = render.safe_area_right_pct if render else 0.10
     return {
-        "margin_v": int(height * inset),
-        "margin_l": int(width * inset),
-        "margin_r": int(width * inset),
+        "margin_top": int(height * top_pct),
+        "margin_bottom": int(height * bottom_pct),
+        "margin_left": int(width * left_pct),
+        "margin_right": int(width * right_pct),
         "width": width,
         "height": height,
     }
@@ -179,9 +183,11 @@ def subtitle_style_params(
     margins = safe_area_margins(render)
     base_width = margins["width"]
     base_height = margins["height"]
-    margin_v = margins["margin_v"]
-    margin_lr = margins["margin_l"]
-    profile = (render.name.lower() if render else "default")
+    margin_top = margins["margin_top"]
+    margin_bottom = margins["margin_bottom"]
+    margin_left = margins["margin_left"]
+    margin_right = margins["margin_right"]
+    profile = (render.name.lower() if render else "default").replace("_", "-")
     max_lines = max_subtitle_lines or 2
     max_chars = max_chars_per_line or 40
 
@@ -201,8 +207,8 @@ def subtitle_style_params(
         shadow = 1
 
     target = int(base_height * 0.045)
-    available_width = base_width - margin_lr * 2
-    available_height = base_height - margin_v
+    available_width = base_width - margin_left - margin_right
+    available_height = base_height - margin_top - margin_bottom
     max_font = _max_font_size(available_width, available_height, outline)
     font_size = max(24, min(target, max_font))
 
@@ -212,9 +218,11 @@ def subtitle_style_params(
         "bold": 0,
         "outline": outline,
         "shadow": shadow,
-        "margin_v": margin_v,
-        "margin_l": margin_lr,
-        "margin_r": margin_lr,
+        "margin_v": margin_bottom,
+        "margin_l": margin_left,
+        "margin_r": margin_right,
+        "margin_top": margin_top,
+        "margin_bottom": margin_bottom,
         "width": base_width,
         "height": base_height,
     }
@@ -243,6 +251,8 @@ def compute_subtitle_bbox(
         "margin_v": int(style["margin_v"]),
         "margin_l": int(style["margin_l"]),
         "margin_r": int(style["margin_r"]),
+        "margin_top": int(style["margin_top"]),
+        "margin_bottom": int(style["margin_bottom"]),
         "font_size": font_size,
         "outline": outline,
         "shadow": int(style["shadow"]),
@@ -264,21 +274,25 @@ def subtitle_layout_ok(
         max_lines=max_lines,
         max_chars_per_line=max_chars_per_line,
     )
+    margins = safe_area_margins(render)
     frame_width = bbox["frame_width"]
     frame_height = bbox["frame_height"]
-    margin_v = bbox["margin_v"]
+    margin_bottom = bbox["margin_bottom"]
     margin_l = bbox["margin_l"]
     margin_r = bbox["margin_r"]
-    safe_lr = int(frame_width * 0.10)
-    safe_bottom = int(frame_height * 0.10)
+    safe_lr = margins["margin_left"]
+    safe_bottom = margins["margin_bottom"]
+    safe_top = margins["margin_top"]
+    safe_width = frame_width - margins["margin_left"] - margins["margin_right"]
+    safe_height = frame_height - margins["margin_top"] - margins["margin_bottom"]
     ok = True
     if margin_l < safe_lr or margin_r < safe_lr:
         ok = False
-    if margin_v < safe_bottom:
+    if margin_bottom < safe_bottom:
         ok = False
-    if bbox["width"] > (frame_width - margin_l - margin_r):
+    if bbox["height"] > safe_height or bbox["height"] > (frame_height - safe_top - safe_bottom):
         ok = False
-    if bbox["height"] > (frame_height - margin_v):
+    if bbox["width"] > safe_width:
         ok = False
     return ok, bbox
 
@@ -287,14 +301,16 @@ def build_safe_area_overlay_filters(render: RenderSpec | None = None) -> list[st
     margins = safe_area_margins(render)
     width = margins["width"]
     height = margins["height"]
-    margin_v = margins["margin_v"]
-    margin_l = margins["margin_l"]
-    margin_r = margins["margin_r"]
+    margin_top = margins["margin_top"]
+    margin_bottom = margins["margin_bottom"]
+    margin_l = margins["margin_left"]
+    margin_r = margins["margin_right"]
     safe_w = width - margin_l - margin_r
-    safe_h = height - margin_v
+    safe_h = height - margin_top - margin_bottom
     return [
-        f"drawbox=x={margin_l}:y=0:w={safe_w}:h={safe_h}:color=yellow@0.3:t=2",
-        f"drawbox=x=0:y={height - margin_v}:w={width}:h={margin_v}:color=red@0.2:t=2",
+        f"drawbox=x={margin_l}:y={margin_top}:w={safe_w}:h={safe_h}:color=yellow@0.3:t=2",
+        f"drawbox=x=0:y={height - margin_bottom}:w={width}:h={margin_bottom}:color=red@0.2:t=2",
+        f"drawbox=x=0:y=0:w={width}:h={margin_top}:color=red@0.2:t=2",
         f"drawbox=x=0:y=0:w={margin_l}:h={height}:color=red@0.2:t=2",
         f"drawbox=x={width - margin_r}:y=0:w={margin_r}:h={height}:color=red@0.2:t=2",
     ]
