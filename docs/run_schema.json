@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TechSprint Run Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "run_id",
+    "started_at",
+    "finished_at",
+    "duration_seconds_total",
+    "git_commit",
+    "settings_public",
+    "cli_overrides",
+    "anchor_id",
+    "renderer_id",
+    "steps",
+    "artifacts",
+    "media_probe",
+    "audio_duration_seconds",
+    "subtitles_end_seconds",
+    "av_delta_seconds",
+    "subtitle_delta_seconds",
+    "subtitle_layout_ok",
+    "computed_subtitle_bbox_px",
+    "ffmpeg_cmd",
+    "ffmpeg_stderr_path",
+    "run_log_path",
+    "loudnorm_filter_stats"
+  ],
+  "properties": {
+    "run_id": { "type": "string", "minLength": 1 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "duration_seconds_total": { "type": "number", "minimum": 0 },
+    "git_commit": { "type": ["string", "null"], "minLength": 1 },
+    "settings_public": { "type": "object" },
+    "cli_overrides": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "anchor_id": { "type": "string", "minLength": 1 },
+    "renderer_id": { "type": ["string", "null"], "minLength": 1 },
+    "steps": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "started_at", "finished_at", "duration_s"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "started_at": { "type": "string", "format": "date-time" },
+          "finished_at": { "type": "string", "format": "date-time" },
+          "duration_s": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["script", "audio", "subtitles", "video"],
+      "properties": {
+        "script": { "$ref": "#/definitions/artifactEntry" },
+        "audio": { "$ref": "#/definitions/artifactEntry" },
+        "subtitles": { "$ref": "#/definitions/artifactEntry" },
+        "video": { "$ref": "#/definitions/artifactEntry" }
+      }
+    },
+    "media_probe": { "$ref": "#/definitions/mediaProbe" },
+    "audio_duration_seconds": { "type": ["number", "null"], "minimum": 0 },
+    "subtitles_end_seconds": { "type": ["number", "null"], "minimum": 0 },
+    "av_delta_seconds": { "type": ["number", "null"], "minimum": 0 },
+    "subtitle_delta_seconds": { "type": ["number", "null"], "minimum": 0 },
+    "subtitle_layout_ok": { "type": ["boolean", "null"] },
+    "computed_subtitle_bbox_px": { "type": ["object", "null"], "additionalProperties": true },
+    "ffmpeg_cmd": { "type": ["string", "null"] },
+    "ffmpeg_stderr_path": { "type": ["string", "null"] },
+    "run_log_path": { "type": ["string", "null"] },
+    "loudnorm_filter_stats": { "type": ["object", "null"], "additionalProperties": true }
+  },
+  "definitions": {
+    "artifactEntry": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "size_bytes": { "type": ["number", "null"], "minimum": 0 },
+        "text_path": { "type": "string", "minLength": 1 },
+        "text_sha256": { "type": "string", "minLength": 1 },
+        "source": { "type": "string" },
+        "segment_count": { "type": ["integer", "null"], "minimum": 0 },
+        "segment_stats": { "type": ["object", "null"], "additionalProperties": true },
+        "cue_count": { "type": ["integer", "null"], "minimum": 0 },
+        "cue_stats": { "type": ["object", "null"], "additionalProperties": true },
+        "asr_split": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "required": ["path"]
+    },
+    "mediaProbe": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "duration_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "width": { "type": ["integer", "null"], "minimum": 0 },
+        "height": { "type": ["integer", "null"], "minimum": 0 },
+        "fps": { "type": ["number", "null"], "minimum": 0 },
+        "video_codec": { "type": ["string", "null"] },
+        "pixel_format": { "type": ["string", "null"] },
+        "audio_present": { "type": ["boolean", "null"] },
+        "loudnorm": { "type": ["object", "null"], "additionalProperties": true }
+      }
+    }
+  }
+}

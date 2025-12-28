@@ -114,7 +114,11 @@ def _subtitle_end_seconds(path: Path) -> float | None:
         lines = [l.strip() for l in block.splitlines() if l.strip()]
         if not lines:
             continue
-        timing = lines[1] if len(lines) > 1 and "-->" in lines[1] else (lines[0] if "-->" in lines[0] else None)
+        timing = (
+            lines[1]
+            if len(lines) > 1 and "-->" in lines[1]
+            else (lines[0] if "-->" in lines[0] else None)
+        )
         if not timing:
             continue
         parts = [p.strip() for p in timing.split("-->")]
@@ -136,6 +140,142 @@ def _parse_srt_time(value: str) -> float | None:
         return None
 
 
+def _load_run_manifest_schema() -> dict[str, Any]:
+    schema_path = Path(__file__).with_name("run_schema.json")
+    if not schema_path.exists():
+        raise FileNotFoundError(f"run_schema.json not found near {__file__}")
+    try:
+        return json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"run_schema.json is not valid JSON: {exc}") from exc
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_datetime(value: str) -> bool:
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_type(instance: Any, allowed_types: list[str]) -> bool:
+    for allowed in allowed_types:
+        if allowed == "null" and instance is None:
+            return True
+        if allowed == "object" and isinstance(instance, dict):
+            return True
+        if allowed == "array" and isinstance(instance, list):
+            return True
+        if allowed == "string" and isinstance(instance, str):
+            return True
+        if allowed == "number" and _is_number(instance):
+            return True
+        if allowed == "integer" and isinstance(instance, int) and not isinstance(instance, bool):
+            return True
+        if allowed == "boolean" and isinstance(instance, bool):
+            return True
+    return False
+
+
+def _validate_instance(
+    instance: Any,
+    schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    path: list[Any],
+) -> None:
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if not ref.startswith("#/definitions/"):
+            location = "/".join(str(p) for p in path) or "<root>"
+            raise ValueError(f"Invalid run manifest at {location}: unsupported $ref '{ref}'")
+        ref_key = ref.split("/")[-1]
+        schema = root_schema.get("definitions", {}).get(ref_key, {})
+
+    schema_type = schema.get("type")
+    allowed_types: list[str] = []
+    if isinstance(schema_type, list):
+        allowed_types = schema_type
+    elif schema_type:
+        allowed_types = [schema_type]
+    if allowed_types:
+        if not _validate_type(instance, allowed_types):
+            location = "/".join(str(p) for p in path) or "<root>"
+            expected = ", ".join(allowed_types)
+            raise ValueError(f"Invalid run manifest at {location}: expected types [{expected}]")
+        if instance is None:
+            return
+
+    if isinstance(instance, str):
+        min_length = schema.get("minLength")
+        if isinstance(min_length, int) and len(instance) < min_length:
+            location = "/".join(str(p) for p in path) or "<root>"
+            raise ValueError(
+                f"Invalid run manifest at {location}: string is shorter than {min_length}"
+            )
+        if schema.get("format") == "date-time" and not _is_datetime(instance):
+            location = "/".join(str(p) for p in path) or "<root>"
+            raise ValueError(
+                f"Invalid run manifest at {location}: expected ISO-8601 date-time"
+            )
+
+    if _is_number(instance):
+        minimum = schema.get("minimum")
+        if isinstance(minimum, (int, float)) and instance < minimum:
+            location = "/".join(str(p) for p in path) or "<root>"
+            raise ValueError(
+                f"Invalid run manifest at {location}: value below minimum {minimum}"
+            )
+
+    if isinstance(instance, list):
+        min_items = schema.get("minItems")
+        if isinstance(min_items, int) and len(instance) < min_items:
+            location = "/".join(str(p) for p in path) or "<root>"
+            raise ValueError(
+                f"Invalid run manifest at {location}: expected at least {min_items} items"
+            )
+        item_schema = schema.get("items")
+        if item_schema:
+            for idx, item in enumerate(instance):
+                _validate_instance(item, item_schema, root_schema, [*path, idx])
+
+    if isinstance(instance, dict):
+        required = schema.get("required", [])
+        for key in required:
+            if key not in instance:
+                location = "/".join(str(p) for p in path) or "<root>"
+                raise ValueError(
+                    f"Invalid run manifest at {location}: missing required field '{key}'"
+                )
+        properties = schema.get("properties", {})
+        for key, value in instance.items():
+            if key in properties:
+                _validate_instance(value, properties[key], root_schema, [*path, key])
+            else:
+                additional = schema.get("additionalProperties", True)
+                if additional is False:
+                    location = "/".join(str(p) for p in path) or "<root>"
+                    raise ValueError(
+                        f"Invalid run manifest at {location}: unexpected field '{key}'"
+                    )
+
+
+def validate_run_manifest(
+    manifest: dict[str, Any], *, schema: dict[str, Any] | None = None
+) -> None:
+    """Validate a manifest payload against the run.json schema.
+
+    Raises:
+        ValueError: if validation fails or the schema cannot be loaded.
+    """
+
+    manifest_schema = schema or _load_run_manifest_schema()
+    _validate_instance(manifest, manifest_schema, manifest_schema, [])
+
+
 def write_run_manifest(
     *,
     job: Job,
@@ -152,7 +292,9 @@ def write_run_manifest(
     subtitles_end = _subtitle_end_seconds(job.workspace.subtitles_srt)
     av_delta = abs(video_duration - audio_duration) if audio_duration and video_duration else None
     subtitle_delta = (
-        abs(subtitles_end - audio_duration) if audio_duration is not None and subtitles_end is not None else None
+        abs(subtitles_end - audio_duration)
+        if audio_duration is not None and subtitles_end is not None
+        else None
     )
     subtitle_layout_ok = None
     subtitle_bbox = None
@@ -189,6 +331,8 @@ def write_run_manifest(
         "run_log_path": getattr(job, "run_log_path", None),
         "loudnorm_filter_stats": getattr(job, "loudnorm_stats", None),
     }
+
+    validate_run_manifest(payload)
 
     out = job.workspace.run_manifest
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")

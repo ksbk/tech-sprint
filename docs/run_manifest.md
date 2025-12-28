@@ -102,6 +102,10 @@ and reproducibility, and may evolve in future versions.
 - `artifacts`: output file paths and sizes (bytes) for each artifact.
 - `media_probe`: ffprobe/ffmpeg metadata summary; may be null if unavailable.
 
+## Schema
+
+`run.json` is validated against [`docs/run_schema.json`](./run_schema.json) before being written.
+
 ## Notes
 
 - This manifest format is **v1** and may evolve as new runtime data is added.

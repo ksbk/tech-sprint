@@ -118,3 +118,4 @@ def test_pipeline_writes_run_manifest(tmp_path: Path, monkeypatch) -> None:
     assert data["artifacts"]["video"]["path"].endswith("final.mp4")
     assert len(data["steps"]) == 5
     assert data["loudnorm_filter_stats"]["output_i"] == "-16.0"
+    manifest_utils.validate_run_manifest(data)
