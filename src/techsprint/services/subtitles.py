@@ -43,6 +43,15 @@ def _format_srt_time(seconds: float) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d},{ms:03d}"
 
 
+def _parse_srt_time(value: str) -> float | None:
+    try:
+        hms, ms = value.split(",")
+        h, m, s = hms.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+    except Exception:
+        return None
+
+
 MAX_SUBTITLE_LINES = 2
 MAX_CHARS_PER_LINE = 36
 HEURISTIC_MAX_CUE_SECONDS = 4.0
@@ -236,11 +245,17 @@ def _has_verb(text: str) -> bool:
         "should",
         "may",
         "might",
+        "raise",
+        "raises",
+        "raised",
+        "raising",
     }
     for word in words:
         if word in verbs:
             return True
         if len(word) > 3 and (word.endswith("ed") or word.endswith("ing")):
+            return True
+        if len(word) > 3 and word.endswith("s") and word not in {"news"}:
             return True
     return False
 
@@ -318,6 +333,102 @@ def _trim_text_for_cps(text: str, *, duration: float, cps_max: float) -> str:
     return " ".join(trimmed)
 
 
+def _enforce_cps_target(text: str, *, duration: float) -> str:
+    if duration <= 0 or not text:
+        return text
+    cps = len(text.replace(" ", "")) / duration
+    if cps <= CAPTION_CPS_TARGET:
+        return text
+    return _trim_text_for_cps(text, duration=duration, cps_max=CAPTION_CPS_TARGET)
+
+
+def _finalize_cue_text(text: str, *, duration: float) -> str:
+    cleaned = _final_dangling_cleanup(text)
+    cleaned = _enforce_cps_target(cleaned, duration=duration)
+    cleaned = _final_dangling_cleanup(cleaned)
+    if cleaned:
+        cleaned = _fix_sentence_punctuation(cleaned)
+        cleaned = _sentence_case(cleaned)
+    return cleaned
+
+
+def _finalize_cues_for_srt(
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    finalized: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        duration = end - start
+        if duration <= 0:
+            continue
+        if duration > CAPTION_MAX_SECONDS:
+            parts = max(2, math.ceil(duration / CAPTION_MAX_SECONDS))
+            chunks = _split_text_for_max_duration(text, parts)
+            if not chunks:
+                continue
+            slot = duration / len(chunks)
+            for idx, chunk in enumerate(chunks):
+                seg_start = start + slot * idx
+                seg_end = min(seg_start + slot, end)
+                if seg_end - seg_start <= 0:
+                    continue
+                cleaned = _finalize_cue_text(chunk, duration=seg_end - seg_start)
+                if not cleaned:
+                    continue
+                finalized.append((seg_start, seg_end, cleaned))
+            continue
+        cleaned = _finalize_cue_text(text, duration=duration)
+        if cleaned:
+            finalized.append((start, end, cleaned))
+
+    merged: list[tuple[float, float, str]] = []
+    for start, end, text in finalized:
+        duration = end - start
+        if duration >= CAPTION_MIN_SECONDS:
+            merged.append((start, end, text))
+            continue
+        if merged:
+            prev_start, prev_end, prev_text = merged[-1]
+            if end - prev_start <= CAPTION_MAX_SECONDS:
+                merged_text = _finalize_cue_text(f"{prev_text} {text}".strip(), duration=end - prev_start)
+                merged[-1] = (prev_start, end, merged_text)
+                continue
+        merged.append((start, end, text))
+    return merged
+
+
+def _rewrite_srt_with_finalization(path: Path) -> None:
+    if not path.exists():
+        return
+    cues: list[tuple[float, float, str]] = []
+    for block in path.read_text(encoding="utf-8", errors="ignore").split("\n\n"):
+        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        timing = lines[1] if len(lines) > 1 and "-->" in lines[1] else (lines[0] if "-->" in lines[0] else None)
+        if not timing:
+            continue
+        parts = [p.strip() for p in timing.split("-->")]
+        if len(parts) != 2:
+            continue
+        start = _parse_srt_time(parts[0])
+        end = _parse_srt_time(parts[1])
+        if start is None or end is None or end <= start:
+            continue
+        text = " ".join(lines[2:]) if len(lines) > 2 else ""
+        cues.append((start, end, text))
+
+    if not cues:
+        return
+    cues = _finalize_cues_for_srt(cues)
+    lines: list[str] = []
+    for idx, (start, end, text) in enumerate(cues, start=1):
+        lines.append(str(idx))
+        lines.append(f"{_format_srt_time(start)} --> {_format_srt_time(end)}")
+        lines.append(_wrap_text_lines(text, duration_seconds=end - start))
+        lines.append("")
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
 def _strip_dangling_tail(text: str) -> str:
     words = text.split()
     while words and words[-1].lower().strip(",;:.!?") in CAPTION_DANGLING_TAIL_WORDS:
@@ -333,6 +444,23 @@ def _repair_fragment(text: str) -> str:
     is_plural = words[-1].lower().endswith("s") if words else False
     verb = "are" if is_plural else "is"
     return f"{stripped} {verb} underway."
+
+
+def _final_dangling_cleanup(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned
+    tokens = sorted(CAPTION_DANGLING_TAIL_WORDS | CAPTION_FORBIDDEN_TOKENS)
+    words = cleaned.split()
+    if words:
+        last = words[-1].strip(",;:.!?")
+        if last.lower() in tokens:
+            words = words[:-1]
+            cleaned = " ".join(words).strip()
+    cleaned = re.sub(r"\\s{2,}", " ", cleaned).strip()
+    if cleaned and not cleaned.endswith((".", "?", "!")):
+        cleaned = f"{cleaned}."
+    return cleaned
 
 
 def _apply_text_integrity(
@@ -547,6 +675,30 @@ def _split_text_by_parts(text: str, parts: int) -> list[str]:
     return chunks
 
 
+def _split_text_for_max_duration(text: str, parts: int) -> list[str]:
+    words = text.strip().split()
+    if not words:
+        return []
+    if parts <= 1 or len(words) == 1:
+        return [" ".join(words)]
+    # Prefer punctuation boundaries, then fall back to balanced word splits.
+    segments = [
+        seg.strip()
+        for seg in re.split(r"(?<=[.!?;:])\\s+|,\\s+", text)
+        if seg.strip()
+    ]
+    if len(segments) >= parts:
+        target = max(1, math.ceil(len(segments) / parts))
+        grouped: list[str] = []
+        for idx in range(0, len(segments), target):
+            grouped.append(" ".join(segments[idx : idx + target]).strip())
+        if len(grouped) > parts:
+            tail = grouped.pop()
+            grouped[-1] = f"{grouped[-1]} {tail}".strip()
+        return grouped
+    return _split_text_by_parts(text, parts)
+
+
 def _wrap_text_lines(
     text: str,
     *,
@@ -554,6 +706,8 @@ def _wrap_text_lines(
     max_lines: int = MAX_SUBTITLE_LINES,
     duration_seconds: float | None = None,
 ) -> str:
+    if duration_seconds is not None:
+        text = _finalize_cue_text(text, duration=duration_seconds)
     text = _sanitize_caption_text(text)
     words = text.strip().split()
     if not words:
@@ -828,6 +982,7 @@ def _write_srt_from_text(
         if current >= duration:
             break
     cues = _postprocess_cues(cues, audio_duration=duration, repairs=repairs)
+    cues = _finalize_cues_for_srt(cues)
     lines: list[str] = []
     for idx, (start, end, chunk) in enumerate(cues, start=1):
         lines.append(str(idx))
@@ -835,6 +990,7 @@ def _write_srt_from_text(
         lines.append(_wrap_text_lines(chunk, duration_seconds=end - start))
         lines.append("")
     out_path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    _rewrite_srt_with_finalization(out_path)
 
 
 def _split_asr_segment(
@@ -1339,7 +1495,72 @@ def _postprocess_cues(
                     continue
         final_pass.append((start, end, text))
         i += 1
-    return final_pass
+    cleaned_final: list[tuple[float, float, str]] = []
+    for start, end, text in final_pass:
+        cleaned = _final_dangling_cleanup(text)
+        cleaned_final.append((start, end, cleaned))
+
+    hardened_max: list[tuple[float, float, str]] = []
+    for start, end, text in cleaned_final:
+        duration = end - start
+        if duration <= 0:
+            continue
+        if duration > CAPTION_MAX_SECONDS and duration - CAPTION_MAX_SECONDS <= CAPTION_TOLERANCE_SECONDS:
+            end = start + CAPTION_MAX_SECONDS - 0.01
+            duration = end - start
+        if duration <= CAPTION_MAX_SECONDS:
+            cleaned = _finalize_cue_text(text, duration=duration)
+            if cleaned:
+                hardened_max.append((start, end, cleaned))
+            continue
+        parts = max(2, math.ceil(duration / CAPTION_MAX_SECONDS))
+        chunks = _split_text_for_max_duration(text, parts)
+        if not chunks:
+            continue
+        slot = duration / len(chunks)
+        segments: list[tuple[float, float, str]] = []
+        for idx, chunk in enumerate(chunks):
+            seg_start = start + slot * idx
+            seg_end = min(seg_start + slot, end)
+            if seg_end <= seg_start:
+                continue
+            cleaned = _finalize_cue_text(chunk, duration=seg_end - seg_start)
+            if cleaned:
+                segments.append((seg_start, seg_end, cleaned))
+        if not segments:
+            continue
+        # Merge any too-short fragments when we can keep max duration.
+        i = 0
+        while i < len(segments):
+            seg_start, seg_end, seg_text = segments[i]
+            if seg_end - seg_start >= CAPTION_MIN_SECONDS:
+                hardened_max.append((seg_start, seg_end, seg_text))
+                i += 1
+                continue
+            merged = False
+            if hardened_max:
+                prev_start, prev_end, prev_text = hardened_max[-1]
+                if seg_end - prev_start <= CAPTION_MAX_SECONDS:
+                    merged_text = _finalize_cue_text(
+                        f"{prev_text} {seg_text}".strip(),
+                        duration=seg_end - prev_start,
+                    )
+                    hardened_max[-1] = (prev_start, seg_end, merged_text)
+                    merged = True
+            if not merged and i + 1 < len(segments):
+                next_start, next_end, next_text = segments[i + 1]
+                if next_end - seg_start <= CAPTION_MAX_SECONDS:
+                    merged_text = _finalize_cue_text(
+                        f"{seg_text} {next_text}".strip(),
+                        duration=next_end - seg_start,
+                    )
+                    hardened_max.append((seg_start, next_end, merged_text))
+                    i += 1
+                    merged = True
+            if not merged:
+                hardened_max.append((seg_start, seg_end, seg_text))
+            i += 1
+    return hardened_max
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:
@@ -1475,6 +1696,7 @@ class OpenAITranscribeBackend:
                 seg_end = min(seg_start + slot, end)
                 cues.append((seg_start, seg_end, chunk))
         cues = _postprocess_cues(cues, audio_duration=audio_duration, merge_gap_seconds=0.0)
+        cues = _finalize_cues_for_srt(cues)
         lines: list[str] = []
         for idx, (start, end, chunk) in enumerate(cues, start=1):
             lines.append(str(idx))
@@ -1561,6 +1783,7 @@ class SubtitleService:
                     merge_gap_seconds=0.0,
                     repairs=integrity_repairs,
                 )
+                cues = _finalize_cues_for_srt(cues)
                 for cue_start, cue_end, cue_text in cues:
                     if cue_end <= cue_start:
                         continue
@@ -1570,6 +1793,7 @@ class SubtitleService:
                     lines.append("")
                     idx += 1
                 out.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+                _rewrite_srt_with_finalization(out)
                 return SubtitleArtifact(
                     path=out,
                     format="srt",
