@@ -121,6 +121,42 @@ def test_youtube_renderer_has_specific_safe_area() -> None:
     assert f"MarginV={bottom}" in value
 
 
+def test_renderer_styles_inject_drawtext_parameters() -> None:
+    from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
+    from techsprint.services.subtitles import MAX_CHARS_PER_LINE, MAX_SUBTITLE_LINES
+
+    tiktok_style = ffmpeg.build_subtitles_filter(
+        "captions.srt",
+        render=TIKTOK,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+    reels_style = ffmpeg.build_subtitles_filter(
+        "captions.srt",
+        render=REELS,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+    yt_style = ffmpeg.build_subtitles_filter(
+        "captions.srt",
+        render=YOUTUBE_SHORTS,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+
+    assert "Fontname=Proxima Nova" in tiktok_style
+    assert "Outline=3" in tiktok_style
+    assert "Shadow=2" in tiktok_style
+
+    assert "Fontname=Instagram Sans" in reels_style
+    assert "Outline=3" in reels_style
+    assert "Shadow=2" in reels_style
+
+    assert "Fontname=Roboto" in yt_style
+    assert "Outline=2" in yt_style
+    assert "Shadow=1" in yt_style
+
+
 def test_ass_filter_path_uses_ass_filter() -> None:
     value = ffmpeg.build_subtitles_filter("captions.ass", force_style=False)
     assert value.startswith("ass=")

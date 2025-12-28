@@ -170,11 +170,15 @@ def safe_area_margins(render: RenderSpec | None = None) -> dict[str, int]:
     bottom_pct = render.safe_area_bottom_pct if render else 0.10
     left_pct = render.safe_area_left_pct if render else 0.10
     right_pct = render.safe_area_right_pct if render else 0.10
+    margin_top_override = getattr(render, "subtitle_margin_top_px", None) if render else None
+    margin_bottom_override = getattr(render, "subtitle_margin_bottom_px", None) if render else None
+    margin_left_override = getattr(render, "subtitle_margin_left_px", None) if render else None
+    margin_right_override = getattr(render, "subtitle_margin_right_px", None) if render else None
     return {
-        "margin_top": int(height * top_pct),
-        "margin_bottom": int(height * bottom_pct),
-        "margin_left": int(width * left_pct),
-        "margin_right": int(width * right_pct),
+        "margin_top": int(margin_top_override if margin_top_override is not None else height * top_pct),
+        "margin_bottom": int(margin_bottom_override if margin_bottom_override is not None else height * bottom_pct),
+        "margin_left": int(margin_left_override if margin_left_override is not None else width * left_pct),
+        "margin_right": int(margin_right_override if margin_right_override is not None else width * right_pct),
         "width": width,
         "height": height,
     }
@@ -202,15 +206,18 @@ def subtitle_style_params(
         height_limit = (available_height - outline * 2) / (max_lines * 1.2)
         return int(min(width_limit, height_limit))
 
-    if profile in {"tiktok", "reels"}:
-        outline = 3
-        shadow = 1
-    elif profile in {"youtube-shorts", "youtube"}:
-        outline = 2
-        shadow = 1
-    else:
-        outline = 3
-        shadow = 1
+    outline = int(render.subtitle_outline_px) if render and render.subtitle_outline_px is not None else None
+    shadow = int(render.subtitle_shadow_px) if render and render.subtitle_shadow_px is not None else None
+    if outline is None or shadow is None:
+        if profile in {"tiktok", "reels"}:
+            outline = outline or 3
+            shadow = shadow or 1
+        elif profile in {"youtube-shorts", "youtube"}:
+            outline = outline or 2
+            shadow = shadow or 1
+        else:
+            outline = outline or 3
+            shadow = shadow or 1
 
     target = int(base_height * 0.045)
     available_width = base_width - margin_left - margin_right
@@ -219,9 +226,9 @@ def subtitle_style_params(
     font_size = max(24, min(target, max_font))
 
     return {
-        "font_name": "Arial",
+        "font_name": render.subtitle_font if render and render.subtitle_font else "Arial",
         "font_size": font_size,
-        "bold": 0,
+        "bold": 1 if render and render.subtitle_bold else 0,
         "outline": outline,
         "shadow": shadow,
         "margin_v": margin_bottom,
