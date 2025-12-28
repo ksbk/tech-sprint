@@ -92,7 +92,7 @@
         "segment_stats": { "type": ["object", "null"], "additionalProperties": true },
         "cue_count": { "type": ["integer", "null"], "minimum": 0 },
         "cue_stats": { "type": ["object", "null"], "additionalProperties": true },
-        "asr_split": { "type": ["number", "null"], "minimum": 0 }
+        "asr_split": { "type": ["boolean", "null"] }
       },
       "required": ["path"]
     },

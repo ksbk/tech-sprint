@@ -85,23 +85,21 @@ CAPTION_METADATA_RE = re.compile(r"\b(anchor|asterisk|narrator|speaker|sfx|music
 CAPTION_BRACKET_LINE_RE = re.compile(r"^\W*[\[\(].*[\]\)]\W*$")
 CAPTION_BAD_FORMS = {
     "hostel bid": "hostile bid",
-    "warner brothers": "Warner Bros. Discovery",
-    "warner brothers.": "Warner Bros. Discovery",
-    "warner bros": "Warner Bros. Discovery",
-    "warner bros.": "Warner Bros. Discovery",
-    "brothers' discovery": "Warner Bros. Discovery",
-    "brothers discovery": "Warner Bros. Discovery",
-    "japanese": "Japanese",
-    "apple": "Apple",
+    "warner brothers": "Warner Discovery",
+    "warner brothers.": "Warner Discovery",
+    "warner bros": "Warner Discovery",
+    "warner bros.": "Warner Discovery",
+    "brothers' discovery": "Warner Discovery",
+    "brothers discovery": "Warner Discovery",
     "father -son": "father-son",
 }
 CAPTION_PROPER_NOUNS = {
-    "warner bros discovery": "Warner Bros. Discovery",
-    "warner bros. discovery": "Warner Bros. Discovery",
-    "brothers' discovery": "Warner Bros. Discovery",
-    "brothers discovery": "Warner Bros. Discovery",
-    "warner bros.": "Warner Bros.",
-    "warner bros": "Warner Bros.",
+    "warner bros discovery": "Warner Discovery",
+    "warner bros. discovery": "Warner Discovery",
+    "brothers' discovery": "Warner Discovery",
+    "brothers discovery": "Warner Discovery",
+    "warner bros.": "Warner Discovery",
+    "warner bros": "Warner Discovery",
     "apple": "Apple",
     "tokyo": "Tokyo",
     "japanese": "Japanese",
@@ -204,8 +202,9 @@ def _dedupe_repeated_words(text: str) -> str:
 
 
 def _normalize_ellipses(text: str) -> str:
-    # Replace 4+ dots with a standard 3-dot ellipsis.
-    cleaned = re.sub(r"\.{2,}", "...", text)
+    # Normalize to a single ASCII ellipsis per cue.
+    cleaned = text.replace("…", "...")
+    cleaned = re.sub(r"\.{2,}", "...", cleaned)
     if cleaned.count("...") > 1:
         first = cleaned.find("...")
         cleaned = cleaned[: first + 3] + cleaned[first + 3 :].replace("...", "")
@@ -263,6 +262,7 @@ def _fix_sentence_punctuation(text: str) -> str:
         return text
     if stripped.endswith((".", "?", "!")):
         return stripped
+    stripped = stripped.rstrip(",;:")
     return f"{stripped}."
 
 
@@ -280,6 +280,59 @@ def _sentence_case(text: str) -> str:
             chars[idx] = ch.upper()
             return "".join(chars)
     return text
+
+
+def _needs_merge_continuation(text: str, next_text: str) -> bool:
+    if not text:
+        return False
+    stripped = text.rstrip()
+    if stripped.endswith((".", "?", "!")):
+        return False
+    last_word = stripped.split()[-1].lower().strip(",;:.!?") if stripped.split() else ""
+    if last_word in CAPTION_DANGLING_WORDS or last_word in CAPTION_DANGLING_TAIL_WORDS or stripped.endswith((",", ";", ":")):
+        return True
+    if next_text:
+        next_first = next_text.split()[0].lower().strip(",;:.!?") if next_text.split() else ""
+        if next_first in CAPTION_FORBIDDEN_TOKENS:
+            return True
+        if next_text[:1].islower():
+            return True
+    return False
+
+
+def _trim_text_for_cps(text: str, *, duration: float, cps_max: float) -> str:
+    if duration <= 0:
+        return text
+    max_chars = max(1, int(math.floor(duration * cps_max)))
+    words = text.split()
+    trimmed: list[str] = []
+    char_count = 0
+    for word in words:
+        word_chars = len(word)
+        if char_count + word_chars > max_chars:
+            break
+        trimmed.append(word)
+        char_count += word_chars
+    if not trimmed and words:
+        trimmed = [words[0]]
+    return " ".join(trimmed)
+
+
+def _strip_dangling_tail(text: str) -> str:
+    words = text.split()
+    while words and words[-1].lower().strip(",;:.!?") in CAPTION_DANGLING_TAIL_WORDS:
+        words.pop()
+    return " ".join(words)
+
+
+def _repair_fragment(text: str) -> str:
+    words = text.split()
+    if len(words) >= 4 or _has_verb(text):
+        return text
+    stripped = text.rstrip(".?!")
+    is_plural = words[-1].lower().endswith("s") if words else False
+    verb = "are" if is_plural else "is"
+    return f"{stripped} {verb} underway."
 
 
 def _apply_text_integrity(
@@ -406,13 +459,11 @@ def _compress_caption_text(text: str) -> str:
         "like",
         "well",
     }
-    lowered = cleaned.lower()
     for phrase in sorted(fillers, key=len, reverse=True):
-        lowered = re.sub(rf"\\b{re.escape(phrase)}\\b", "", lowered)
-    cleaned = lowered
+        cleaned = re.sub(rf"\\b{re.escape(phrase)}\\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\\s{2,}", " ", cleaned).strip()
     cleaned = re.sub(r"\\s+([.,!?;:])", r"\\1", cleaned)
-    return cleaned
+    return _sanitize_caption_text(cleaned)
 
 
 def _aggressive_trim_text(text: str) -> str:
@@ -1184,32 +1235,110 @@ def _postprocess_cues(
         cleaned = _sanitize_caption_text(text)
         cleaned = _normalize_ellipses(cleaned)
         cleaned = _dedupe_repeated_words(cleaned)
-        cleaned = _fix_sentence_punctuation(cleaned)
-        cleaned = _sentence_case(cleaned)
         normalized.append((start, end, cleaned))
-    final_pass: list[tuple[float, float, str]] = []
-    for start, end, text in normalized:
+
+    merged: list[tuple[float, float, str]] = []
+    i = 0
+    while i < len(normalized):
+        start, end, text = normalized[i]
+        if i + 1 < len(normalized):
+            next_start, next_end, next_text = normalized[i + 1]
+            combined = f"{text} {next_text}".strip()
+            combined_duration = next_end - start
+            if combined_duration <= CAPTION_MAX_SECONDS:
+                needs_merge = _needs_merge_continuation(text, next_text)
+                if len(text.split()) < 4 and not _has_verb(text):
+                    needs_merge = True
+                if needs_merge:
+                    cps = len(combined.replace(" ", "")) / combined_duration if combined_duration > 0 else 0.0
+                    if cps <= CAPTION_CPS_MAX:
+                        merged.append((start, next_end, combined))
+                        i += 2
+                        continue
+        merged.append((start, end, text))
+        i += 1
+
+    cps_adjusted: list[tuple[float, float, str]] = []
+    for idx, (start, end, text) in enumerate(merged):
         duration = end - start
         if duration <= 0:
             continue
-        chars = len(text.replace(" ", ""))
-        if duration > 0 and chars / duration <= CAPTION_CPS_MAX:
-            final_pass.append((start, end, text))
+        text = _sanitize_caption_text(text)
+        text = _normalize_ellipses(text)
+        text = _dedupe_repeated_words(text)
+        cps = len(text.replace(" ", "")) / duration if text else 0.0
+        next_start = merged[idx + 1][0] if idx + 1 < len(merged) else audio_duration
+        if cps > CAPTION_CPS_TARGET and next_start is not None:
+            max_end = min(next_start - 0.02, start + CAPTION_MAX_SECONDS)
+            if max_end > end:
+                new_duration = max_end - start
+                new_cps = len(text.replace(" ", "")) / new_duration if new_duration > 0 else cps
+                if new_cps <= CAPTION_CPS_TARGET:
+                    end = max_end
+                    duration = new_duration
+                    cps = new_cps
+        if cps > CAPTION_CPS_TARGET:
+            compressed = _compress_caption_text(text)
+            if compressed and compressed != text:
+                text = compressed
+                cps = len(text.replace(" ", "")) / duration if text else 0.0
+        if cps > CAPTION_CPS_TARGET:
+            trimmed = _aggressive_trim_text(text)
+            if trimmed and trimmed != text:
+                text = trimmed
+                cps = len(text.replace(" ", "")) / duration if text else 0.0
+        if cps > CAPTION_CPS_TARGET:
+            max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+            parts = max(2, math.ceil(cps / CAPTION_CPS_TARGET))
+            parts = min(parts, max_parts)
+            if parts > 1:
+                chunks = _split_text_by_parts(text, parts)
+                slot = duration / len(chunks)
+                for chunk_idx, chunk in enumerate(chunks):
+                    seg_start = start + slot * chunk_idx
+                    seg_end = min(seg_start + slot, end)
+                    chunk_text = _sanitize_caption_text(chunk)
+                    chunk_text = _normalize_ellipses(chunk_text)
+                    chunk_text = _dedupe_repeated_words(chunk_text)
+                    cps_adjusted.append((seg_start, seg_end, chunk_text))
+                continue
+        if cps > CAPTION_CPS_MAX:
+            text = _trim_text_for_cps(text, duration=duration, cps_max=CAPTION_CPS_MAX)
+        cps_adjusted.append((start, end, text))
+
+    final_pass: list[tuple[float, float, str]] = []
+    i = 0
+    while i < len(cps_adjusted):
+        start, end, text = cps_adjusted[i]
+        duration = end - start
+        if duration <= 0:
+            i += 1
             continue
-        max_chars = max(1, int(math.floor(duration * CAPTION_CPS_MAX)))
-        words = text.split()
-        trimmed: list[str] = []
-        char_count = 0
-        for word in words:
-            word_chars = len(word)
-            if char_count + word_chars > max_chars:
-                break
-            trimmed.append(word)
-            char_count += word_chars
-        if not trimmed and words:
-            trimmed = [words[0]]
-        if trimmed:
-            final_pass.append((start, end, " ".join(trimmed)))
+        text = _sanitize_caption_text(text)
+        text = _normalize_ellipses(text)
+        text = _dedupe_repeated_words(text)
+        if text:
+            text = _strip_dangling_tail(text)
+            text = _repair_fragment(text)
+            text = _fix_sentence_punctuation(text)
+            text = _sentence_case(text)
+        if len(text.split()) < 4 and not _has_verb(text) and i + 1 < len(cps_adjusted):
+            next_start, next_end, next_text = cps_adjusted[i + 1]
+            combined = f"{text} {next_text}".strip()
+            combined_duration = next_end - start
+            if combined_duration <= CAPTION_MAX_SECONDS:
+                cps = len(combined.replace(" ", "")) / combined_duration if combined_duration > 0 else 0.0
+                if cps <= CAPTION_CPS_MAX:
+                    combined = _sanitize_caption_text(combined)
+                    combined = _normalize_ellipses(combined)
+                    combined = _dedupe_repeated_words(combined)
+                    combined = _fix_sentence_punctuation(combined)
+                    combined = _sentence_case(combined)
+                    final_pass.append((start, next_end, combined))
+                    i += 2
+                    continue
+        final_pass.append((start, end, text))
+        i += 1
     return final_pass
 
 
