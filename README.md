@@ -37,6 +37,12 @@ Or run demo mode with the standard command:
 techsprint make --demo
 ```
 
+**Platform notes**
+
+- **Windows:** Install ffmpeg via [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) (`winget install Gyan.FFmpeg`) or [Chocolatey](https://chocolatey.org/) (`choco install ffmpeg`). Close and reopen your terminal so `ffmpeg.exe` is on `PATH` before running `techsprint demo`.
+- **Linux:** Install ffmpeg with your package manager (e.g., `sudo apt-get install ffmpeg` on Debian/Ubuntu). Confirm `ffmpeg` is on `PATH` with `ffmpeg -version`.
+- Run `techsprint doctor` if ffmpeg is not detected; it reports OS-specific install hints.
+
 ## Commands
 
 - `techsprint run` – runs the pipeline with the selected anchor (default: tech)

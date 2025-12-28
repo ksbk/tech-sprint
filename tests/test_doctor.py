@@ -25,7 +25,7 @@ def test_doctor_all_ok(monkeypatch, capsys) -> None:
     assert "ffmpeg version x" in out
 
 
-def test_doctor_missing_ffmpeg(monkeypatch) -> None:
+def test_doctor_missing_ffmpeg(monkeypatch, capsys) -> None:
     def fake_run(cmd):  # noqa: ANN001
         if cmd[0] == "ffmpeg":
             return 1, ""
@@ -41,6 +41,8 @@ def test_doctor_missing_ffmpeg(monkeypatch) -> None:
     settings = Settings()
     code = doctor.run_doctor(settings)
     assert code == 1
+    hint = doctor._ffmpeg_hint()  # noqa: SLF001
+    assert hint in capsys.readouterr().out
 
 
 def test_doctor_missing_edge_tts(monkeypatch) -> None:
