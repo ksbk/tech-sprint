@@ -12,6 +12,7 @@ from techsprint.config.settings import Settings
 from techsprint.demo import run_demo
 from techsprint.domain.job import Job
 from techsprint.domain.workspace import Workspace
+from techsprint.exceptions import TechSprintError
 from techsprint.renderers import REELS, TIKTOK, YOUTUBE_SHORTS
 from techsprint.renderers.base import RenderSpec
 from techsprint.utils import ffmpeg
@@ -20,6 +21,12 @@ from techsprint.utils.logging import configure_logging, get_logger
 
 app = typer.Typer(add_completion=False)
 log = get_logger(__name__)
+
+
+@app.exception_handler(TechSprintError)
+def _handle_techsprint_error(exc: TechSprintError) -> None:
+    typer.echo(f"{exc.label()}: {exc.message}", err=True)
+    raise typer.Exit(code=exc.exit_code or 1)
 
 def _load_edge_tts():
     try:

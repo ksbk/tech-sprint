@@ -64,7 +64,9 @@ class ComposeService:
             bg_path = None
 
         if not audio.exists():
-            raise FileNotFoundError(f"Audio not found: {audio}")
+            raise TechSprintError(
+                f"Audio not found: {audio}",
+            )
 
         burn_subtitles = render.burn_subtitles if render is not None else job.settings.burn_subtitles
         subtitles_path = str(subs) if burn_subtitles and subs.exists() else None
@@ -119,7 +121,7 @@ class ComposeService:
 
         audio_duration = ffmpeg.probe_duration(audio)
         if audio_duration is None:
-            raise RuntimeError("Unable to determine audio duration via ffprobe.")
+            raise TechSprintError("Unable to determine audio duration via ffprobe.")
 
         bg_duration = ffmpeg.probe_duration(bg_path) if bg_path else None
         loop_background = False
@@ -158,6 +160,6 @@ class ComposeService:
             job.loudnorm_stats = ffmpeg.parse_loudnorm_log(stderr_path)
 
         if not out.exists() or out.stat().st_size == 0:
-            raise RuntimeError(f"ffmpeg produced no output: {out}")
+            raise TechSprintError(f"ffmpeg produced no output: {out}")
 
         return VideoArtifact(path=out, format="mp4")
