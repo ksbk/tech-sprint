@@ -266,6 +266,86 @@ def _wrap_text_lines(
     return "\n".join(lines)
 
 
+def _chunk_exceeds_layout(text: str) -> bool:
+    wrapped = _wrap_text_lines(text)
+    wrapped_words = " ".join(wrapped.splitlines()).split()
+    original_words = _sanitize_caption_text(text).split()
+    if len(wrapped_words) != len(original_words):
+        return True
+    lines = wrapped.splitlines()
+    if len(lines) > MAX_SUBTITLE_LINES:
+        return True
+    if any(len(line) > MAX_CHARS_PER_LINE for line in lines):
+        return True
+    return False
+
+
+def _split_cue_for_constraints(
+    *,
+    start: float,
+    end: float,
+    text: str,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if audio_duration is not None:
+        if start >= audio_duration:
+            return []
+        end = min(end, audio_duration)
+    duration = end - start
+    if duration <= 0:
+        return []
+    sanitized = _sanitize_caption_text(text)
+    if not sanitized:
+        return []
+    words = sanitized.split()
+    if not words:
+        return []
+    max_parts = max(
+        1,
+        min(
+            len(words),
+            int(duration / max(CAPTION_MIN_SECONDS - CAPTION_TOLERANCE_SECONDS, 0.01)) or 1,
+        ),
+    )
+
+    def _chunks_fit(chunks: list[str], slot: float) -> bool:
+        if slot < CAPTION_MIN_SECONDS - CAPTION_TOLERANCE_SECONDS:
+            return False
+        for chunk in chunks:
+            if _chunk_exceeds_layout(chunk):
+                return False
+            chars = len(chunk.replace(" ", ""))
+            if slot > 0 and chars / slot > CAPTION_CPS_MAX:
+                return False
+        return True
+
+    for parts in range(1, max_parts + 1):
+        chunks = _split_text_by_parts(sanitized, parts)
+        slot = duration / len(chunks)
+        if _chunks_fit(chunks, slot):
+            cues: list[tuple[float, float, str]] = []
+            for idx, chunk in enumerate(chunks):
+                seg_start = start + slot * idx
+                seg_end = min(seg_start + slot, end)
+                if seg_end <= seg_start:
+                    continue
+                cues.append((seg_start, seg_end, chunk))
+            if cues:
+                return cues
+
+    # Fall back to trimming words until layout and cps are satisfied.
+    trimmed_words = words[:]
+    while trimmed_words:
+        candidate = " ".join(trimmed_words)
+        candidate_duration = duration
+        if not _chunk_exceeds_layout(candidate):
+            chars = len(candidate.replace(" ", ""))
+            if candidate_duration > 0 and chars / candidate_duration <= CAPTION_CPS_MAX:
+                return [(start, end, candidate)]
+        trimmed_words.pop()
+    return []
+
+
 def _is_break_word(word: str) -> bool:
     lowered = word.lower().strip()
     if lowered.endswith((".", "!", "?", ";", ":")):
@@ -749,7 +829,31 @@ def _postprocess_cues(
                     if prev_end >= last_start:
                         last_start = max(prev_end + 0.02, last_end - CAPTION_MIN_SECONDS)
             hardened[-1] = (last_start, last_end, last_text)
-    return hardened
+
+    constrained: list[tuple[float, float, str]] = []
+    for start, end, text in hardened:
+        constrained.extend(
+            _split_cue_for_constraints(
+                start=start,
+                end=end,
+                text=text,
+                audio_duration=audio_duration,
+            )
+        )
+
+    snapped: list[tuple[float, float, str]] = []
+    for start, end, text in constrained:
+        if audio_duration is not None:
+            if start >= audio_duration:
+                continue
+            end = min(end, audio_duration)
+        start = _snap(start)
+        end = _snap(end)
+        if end <= start:
+            continue
+        snapped.append((start, end, text))
+
+    return snapped
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:
