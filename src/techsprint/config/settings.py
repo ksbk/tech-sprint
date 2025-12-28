@@ -97,6 +97,11 @@ class Settings(BaseSettings):
         description="Fail rendering if subtitle layout exceeds safe-area constraints.",
     )
 
+    loudnorm: bool = Field(
+        default=False,
+        description="Enable ffmpeg loudnorm filter for loudness normalization.",
+    )
+
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
@@ -128,5 +133,6 @@ class Settings(BaseSettings):
             "background_video": self.background_video,
             "burn_subtitles": self.burn_subtitles,
             "subtitle_layout_strict": self.subtitle_layout_strict,
+            "loudnorm": self.loudnorm,
             "log_level": self.log_level,
         }

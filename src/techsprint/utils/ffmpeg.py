@@ -32,6 +32,7 @@ def build_compose_cmd(
     max_chars_per_line: int | None = None,
     debug_safe_area: bool = False,
     subtitles_force_style: bool = True,
+    loudnorm: bool = False,
 ) -> list[str]:
     cmd: list[str] = [
         "ffmpeg",
@@ -84,9 +85,14 @@ def build_compose_cmd(
     else:
         cmd += ["-shortest"]
 
+    audio_filters: list[str] = []
+    if loudnorm:
+        audio_filters.append("loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json")
+    audio_filters.append("aresample=async=1:first_pts=0")
+
     cmd += [
         "-af",
-        "aresample=async=1:first_pts=0",
+        ",".join(audio_filters),
         "-c:v",
         "libx264",
         "-preset",
@@ -579,13 +585,30 @@ def probe_loudnorm(path: str | Path) -> dict:
     if proc.returncode != 0:
         raise TechSprintError(f"ffmpeg loudnorm failed: {proc.stderr.strip()}")
 
-    matches = re.findall(r"\{.*?\}", proc.stderr, re.S)
+    data = parse_loudnorm_stderr(proc.stderr)
+    if data is None:
+        raise TechSprintError("ffmpeg loudnorm JSON not found or invalid.")
+    return data
+
+
+def parse_loudnorm_stderr(stderr: str) -> dict | None:
+    matches = re.findall(r"\{.*?\}", stderr, re.S)
     for candidate in reversed(matches):
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    raise TechSprintError("ffmpeg loudnorm JSON not found or invalid.")
+    return None
+
+
+def parse_loudnorm_log(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    return parse_loudnorm_stderr(content)
 
 
 def build_background_cmd(

@@ -52,6 +52,7 @@ class DummyComposeService:
     def render(self, job: Job, *, render: RenderSpec | None = None) -> VideoArtifact:
         path = job.workspace.output_mp4
         path.write_bytes(b"video")
+        job.loudnorm_stats = {"output_i": "-16.0", "output_tp": "-1.0"}
         return VideoArtifact(path=path, format="mp4")
 
 
@@ -65,6 +66,7 @@ class DummyPrompt:
 def test_pipeline_writes_run_manifest(tmp_path: Path, monkeypatch) -> None:
     settings = Settings()
     settings.workdir = str(tmp_path)
+    settings.loudnorm = True
 
     workspace = Workspace.create(settings.workdir, run_id="run1")
     job = Job(
@@ -115,3 +117,4 @@ def test_pipeline_writes_run_manifest(tmp_path: Path, monkeypatch) -> None:
     assert data["renderer_id"] == "tiktok"
     assert data["artifacts"]["video"]["path"].endswith("final.mp4")
     assert len(data["steps"]) == 5
+    assert data["loudnorm_filter_stats"]["output_i"] == "-16.0"
