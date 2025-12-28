@@ -52,6 +52,34 @@ def test_runs_list(tmp_path: Path) -> None:
     assert "true" in lines[2] or "false" in lines[2]
 
 
+def test_runs_list_json(tmp_path: Path) -> None:
+    workdir = tmp_path / ".techsprint"
+    run1 = workdir / "run1"
+    run2 = workdir / "run2"
+
+    _write_run(run1, started_at="2025-01-01T00:00:01Z", duration=1.5, video_present=False)
+    _write_run(run2, started_at="2025-01-01T00:00:02Z", duration=2.5, video_present=True)
+
+    os.utime(run1 / "run.json", (1, 1))
+    os.utime(run2 / "run.json", (2, 2))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["runs", "--workdir", str(workdir), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert isinstance(payload, list)
+    assert len(payload) == 2
+    first = payload[0]
+    assert first["run_id"] == "run2"
+    assert first["started_at"] == "2025-01-01T00:00:02Z"
+    assert first["duration_seconds_total"] == 2.5
+    assert first["video_present"] is True
+    assert first["video_path"]
+    assert first["path"].endswith("run2")
+    assert isinstance(first["manifest"], dict)
+
+
 def test_inspect_latest(tmp_path: Path) -> None:
     workdir = tmp_path / ".techsprint"
     run1 = workdir / "run1"

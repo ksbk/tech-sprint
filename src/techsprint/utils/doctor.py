@@ -53,6 +53,14 @@ def _warn_line(label: str, detail: str = "") -> str:
     return f"⚠️ {label}{detail}"
 
 
+def _ffmpeg_hint() -> str:
+    if sys.platform.startswith("win"):
+        return "Windows: install via winget (`winget install Gyan.FFmpeg`) or add ffmpeg.exe to PATH."
+    if sys.platform.startswith("darwin"):
+        return "macOS: install via Homebrew (`brew install ffmpeg`) and restart your shell."
+    return "Linux: install via your package manager (e.g., `sudo apt-get install ffmpeg`) and ensure PATH includes ffmpeg."
+
+
 def run_doctor(settings: Settings) -> int:
     required_ok = True
     lines: list[str] = []
@@ -74,6 +82,7 @@ def run_doctor(settings: Settings) -> int:
     if ffmpeg_code != 0:
         required_ok = False
         lines.append(_status_line(False, "ffmpeg", " (not found)"))
+        lines.append(_warn_line("ffmpeg install hint", f": {_ffmpeg_hint()}"))
     else:
         first_line = ffmpeg_out.splitlines()[0] if ffmpeg_out else "available"
         lines.append(_status_line(True, "ffmpeg", f": {first_line}"))
@@ -82,6 +91,7 @@ def run_doctor(settings: Settings) -> int:
     if ffprobe_code != 0:
         required_ok = False
         lines.append(_status_line(False, "ffprobe", " (not found)"))
+        lines.append(_warn_line("ffprobe install hint", f": {_ffmpeg_hint()}"))
     else:
         first_line = ffprobe_out.splitlines()[0] if ffprobe_out else "available"
         lines.append(_status_line(True, "ffprobe", f": {first_line}"))

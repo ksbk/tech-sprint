@@ -197,6 +197,11 @@ def config() -> None:
 def runs(
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
     limit: int = typer.Option(5, help="Limit number of runs shown."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Return runs as a JSON array with manifest metadata.",
+    ),
 ) -> None:
     """List recent runs."""
     root = _resolve_workdir(workdir)
@@ -204,7 +209,7 @@ def runs(
     if limit is not None and limit > 0:
         runs_list = runs_list[:limit]
 
-    typer.echo("run_id\tstarted_at\tduration_s\tvideo_present\tpath")
+    entries = []
     for run_dir in runs_list:
         manifest = _load_run_manifest(run_dir / "run.json")
         if not manifest:
@@ -218,7 +223,33 @@ def runs(
         except AttributeError:
             video_path = None
         video_present = "true" if video_path and Path(video_path).exists() else "false"
-        typer.echo(f"{run_dir.name}\t{started_at}\t{duration_str}\t{video_present}\t{run_dir}")
+        entries.append(
+            {
+                "run_id": run_dir.name,
+                "started_at": started_at,
+                "duration_seconds_total": duration if isinstance(duration, (float, int)) else None,
+                "video_present": video_path is not None and Path(video_path).exists(),
+                "video_path": str(video_path) if video_path else None,
+                "path": str(run_dir),
+                "manifest": manifest,
+            }
+        )
+
+    if json_output:
+        typer.echo(json.dumps(entries, indent=2))
+        return
+
+    typer.echo("run_id\tstarted_at\tduration_s\tvideo_present\tpath")
+    for entry in entries:
+        duration_str = (
+            f"{entry['duration_seconds_total']:.2f}"
+            if isinstance(entry["duration_seconds_total"], (float, int))
+            else "n/a"
+        )
+        typer.echo(
+            f"{entry['run_id']}\t{entry['started_at']}\t{duration_str}\t"
+            f"{str(entry['video_present']).lower()}\t{entry['path']}"
+        )
 
 
 @app.command()
