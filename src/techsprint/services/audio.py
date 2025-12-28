@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Protocol
 
 from techsprint.domain.artifacts import AudioArtifact
@@ -135,6 +136,10 @@ class AudioService:
                     log.warning(
                         "Audio synthesis running in existing event loop; ensure completion before render."
                     )
+                    for _ in range(50):
+                        if out.exists() and out.stat().st_size > 0:
+                            break
+                        time.sleep(0.1)
             except Exception as exc:
                 log.warning("Audio synthesis failed (%s); falling back to sine tone.", exc)
 

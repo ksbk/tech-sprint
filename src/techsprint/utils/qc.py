@@ -22,11 +22,25 @@ from techsprint.services.subtitles import (
     CAPTION_MIN_SECONDS,
     CAPTION_METADATA_RE,
     _has_verb,
+    _normalize_verbatim_text,
     _normalize_ellipses,
     _sentence_case,
+    _tokenize_verbatim,
     MAX_CHARS_PER_LINE,
     MAX_SUBTITLE_LINES,
 )
+
+BROADCAST_CANONICAL_TERMS = {
+    "Warner Bros. Discovery",
+    "Live Translation",
+    "Gmail",
+}
+
+BROADCAST_ASR_CONFUSIONS = {
+    "hostel": "hostile",
+    "warner discovery": "warner bros. discovery",
+    "live translations": "live translation",
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,35 @@ def _transcribe_with_faster_whisper(audio_path: Path) -> dict | None:
         from faster_whisper import WhisperModel  # type: ignore
     except Exception:
         return None
+
+
+def _verbatim_diff_summary(expected_text: str, actual_text: str) -> dict:
+    expected_norm = _normalize_verbatim_text(expected_text, remove_non_speech=False)
+    actual_norm = _normalize_verbatim_text(actual_text, remove_non_speech=False)
+    expected_tokens = _tokenize_verbatim(expected_norm, normalize_case=True)
+    actual_tokens = _tokenize_verbatim(actual_norm, normalize_case=True)
+    mismatch = None
+    for idx, (expected, actual) in enumerate(zip(expected_tokens, actual_tokens)):
+        if expected != actual:
+            mismatch = {
+                "mismatch_index": idx,
+                "expected_token": expected,
+                "actual_token": actual,
+            }
+            break
+    if mismatch is None and len(expected_tokens) != len(actual_tokens):
+        idx = min(len(expected_tokens), len(actual_tokens))
+        mismatch = {
+            "mismatch_index": idx,
+            "expected_token": expected_tokens[idx] if idx < len(expected_tokens) else None,
+            "actual_token": actual_tokens[idx] if idx < len(actual_tokens) else None,
+        }
+    return {
+        "status": "pass" if mismatch is None else "fail",
+        "expected_len": len(expected_tokens),
+        "actual_len": len(actual_tokens),
+        "mismatch": mismatch,
+    }
     model = WhisperModel("base", device="cpu", compute_type="int8")
     try:
         segments, _info = model.transcribe(str(audio_path), word_timestamps=True)
@@ -117,6 +160,7 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
     audio_duration = ffmpeg.probe_duration(audio)
     cues = _parse_srt_cues(srt)
 
+    verbatim_mode = job.settings.verbatim_policy in {"audio", "script"}
     qc: dict = {
         "mode": mode,
         "audio_duration": audio_duration,
@@ -124,6 +168,7 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
         "srt_span_ok": True,
         "cue_stats": None,
         "cue_cps_max": None,
+        "cue_cps_median": None,
         "cue_median_seconds": None,
         "cue_short_percent": None,
         "cue_changes_per_10s": None,
@@ -141,6 +186,8 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
         "frames": {},
         "violations": [],
     }
+    qc["verbatim_mode"] = verbatim_mode
+    qc["verbatim_policy"] = job.settings.verbatim_policy
 
     if cues and audio_duration is not None:
         qc["subtitle_start_seconds"] = cues[0][0]
@@ -212,6 +259,13 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
                     violations.append({"cue": idx, "rule": "bad_term"})
                     break
         qc["cue_cps_max"] = max(cps_values) if cps_values else None
+        if cps_values:
+            cps_sorted = sorted(cps_values)
+            mid_cps = len(cps_sorted) // 2
+            if len(cps_sorted) % 2 == 0:
+                qc["cue_cps_median"] = (cps_sorted[mid_cps - 1] + cps_sorted[mid_cps]) / 2
+            else:
+                qc["cue_cps_median"] = cps_sorted[mid_cps]
         qc["violations"] = violations
         durations_sorted = sorted(durations)
         if durations_sorted:
@@ -287,6 +341,17 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
     )
     qc["subtitle_layout_ok"] = layout_ok
     qc["subtitle_layout_bbox"] = layout_bbox
+    style = ffmpeg.subtitle_style_params(
+        render,
+        max_subtitle_lines=MAX_SUBTITLE_LINES,
+        max_chars_per_line=MAX_CHARS_PER_LINE,
+    )
+    qc["subtitle_style"] = {
+        "font_size": int(style["font_size"]),
+        "outline": int(style["outline"]),
+        "shadow": int(style["shadow"]),
+        "play_res_y": int(style["height"]),
+    }
     if not layout_ok:
         qc["warnings"].append("Subtitle layout exceeds safe-area bounds")
 
@@ -304,7 +369,84 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
 
     job.workspace.qc_report_json.write_text(json.dumps(qc, indent=2), encoding="utf-8")
 
-    if mode == "strict":
+    if mode == "broadcast":
+        caption_text = " ".join(text for _, _, text in cues)
+        asr_text = ""
+        if job.workspace.asr_txt.exists():
+            asr_text = job.workspace.asr_txt.read_text(encoding="utf-8", errors="ignore")
+        qc["verbatim_diff"] = {
+            "script_vs_captions": _verbatim_diff_summary(script_text, caption_text),
+            "asr_vs_captions": _verbatim_diff_summary(asr_text, caption_text)
+            if asr_text
+            else {"status": "skipped"},
+            "script_vs_asr": _verbatim_diff_summary(script_text, asr_text)
+            if asr_text
+            else {"status": "skipped"},
+        }
+        failures = []
+        if qc["srt_span_ok"] is False:
+            failures.append("SRT extends beyond audio duration")
+        if qc["cue_stats"] and qc["cue_stats"]["max_seconds"] > CAPTION_MAX_SECONDS:
+            failures.append("Max cue duration exceeds caption limits")
+        if qc["cue_short_percent"] is not None and qc["cue_short_percent"] > 0:
+            failures.append("Cues under minimum duration present")
+        if qc["cue_median_seconds"] is not None and qc["cue_median_seconds"] < 1.0:
+            failures.append("Median cue duration below 1.0s")
+        if qc["orphan_line_rate"] is not None and qc["orphan_line_rate"] > 0.05:
+            failures.append("Orphan line rate exceeds 5%")
+        if qc["cue_changes_per_10s"] is not None and qc["cue_changes_per_10s"] > 5:
+            failures.append("Cue changes per 10s exceeds 5")
+        if audio_duration is not None and qc["subtitle_end_seconds"] is not None:
+            if (audio_duration - qc["subtitle_end_seconds"]) > 0.2:
+                failures.append("Subtitle coverage ends too early")
+        if qc["av_delta_seconds"] is not None and qc["av_delta_seconds"] > 0.25:
+            failures.append("AV duration delta exceeds 0.25s")
+        if qc["subtitle_delta_seconds"] is not None and qc["subtitle_delta_seconds"] > 0.25:
+            failures.append("Subtitle end delta exceeds 0.25s")
+        if qc["subtitle_start_seconds"] is not None and qc["subtitle_start_seconds"] > 0.2:
+            failures.append("Subtitle starts after audio by >0.2s")
+        if qc["subtitle_layout_ok"] is False:
+            failures.append("Subtitle layout exceeds safe-area bounds")
+        drift = qc.get("drift")
+        if drift and (drift["avg_seconds"] > 0.25 or drift["max_seconds"] > 0.25):
+            failures.append("Subtitle/ASR drift exceeds broadcast threshold")
+        if qc.get("violations"):
+            hard_fail_rules = {
+                "end_punctuation",
+                "dangling_tail",
+                "forbidden_line_start",
+                "forbidden_line_end",
+                "max_cps",
+                "min_duration",
+                "max_duration",
+            }
+            hard_fail = [v for v in qc["violations"] if v["rule"] in hard_fail_rules]
+            if hard_fail:
+                detail_parts = [f"cue {v['cue']} {v['rule']}" for v in hard_fail]
+                detail = "; ".join(detail_parts[:12])
+                if len(detail_parts) > 12:
+                    detail = f"{detail}; +{len(detail_parts) - 12} more"
+                failures.append(f"Caption text/layout violations: {detail}")
+        script_lower = script_text.lower()
+        caption_lower = caption_text.lower()
+        missing_terms = [
+            term for term in BROADCAST_CANONICAL_TERMS
+            if term.lower() in script_lower and term.lower() not in caption_lower
+        ]
+        if missing_terms:
+            msg = f"Missing canonical terms: {', '.join(missing_terms)}"
+            if job.settings.verbatim_policy == "script":
+                failures.append(msg)
+            else:
+                qc["warnings"].append(msg)
+        if job.settings.verbatim_policy == "audio" and asr_text:
+            asr_lower = asr_text.lower()
+            for wrong, correct in BROADCAST_ASR_CONFUSIONS.items():
+                if wrong in asr_lower and correct in script_lower:
+                    qc["warnings"].append(f"ASR confusion: '{wrong}' vs '{correct}'")
+        if failures:
+            raise TechSprintError("QC failed: " + "; ".join(failures))
+    elif mode == "strict":
         failures = []
         if qc["srt_span_ok"] is False:
             failures.append("SRT extends beyond audio duration")
@@ -332,7 +474,7 @@ def run_qc(job: Job, *, mode: str, render=None, enable_asr: bool = True) -> dict
         drift = qc.get("drift")
         if drift and (drift["avg_seconds"] > 0.8 or drift["max_seconds"] > 2.0):
             failures.append("Subtitle/ASR drift exceeds thresholds")
-        if qc.get("violations"):
+        if qc.get("violations") and not verbatim_mode:
             detail_parts = [f"cue {v['cue']} {v['rule']}" for v in qc["violations"]]
             detail = "; ".join(detail_parts[:12])
             if len(detail_parts) > 12:

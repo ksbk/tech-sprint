@@ -174,6 +174,7 @@ def _collect_cli_overrides(
     render_raw: str | None = None,
     qc: str | None = None,
     subtitles: str | None = None,
+    verbatim_policy: str | None = None,
     offline: bool | None = None,
 ) -> dict[str, str]:
     overrides: dict[str, str] = {}
@@ -189,6 +190,8 @@ def _collect_cli_overrides(
         overrides["qc"] = qc
     if subtitles is not None:
         overrides["subtitles"] = subtitles
+    if verbatim_policy is not None:
+        overrides["verbatim_policy"] = verbatim_policy
     if offline:
         overrides["offline"] = "true"
     return overrides
@@ -538,13 +541,17 @@ def run(
         None,
         help="Subtitle mode: auto, asr, heuristic.",
     ),
+    verbatim_policy: str = typer.Option(
+        None,
+        help="Verbatim policy: audio or script.",
+    ),
     render: str = typer.Option(
         None,
         help="Render profile (tiktok, reels, youtube-shorts).",
     ),
     qc: str = typer.Option(
         "off",
-        help="QC mode: off, warn, strict.",
+        help="QC mode: off, warn, strict, broadcast.",
     ),
 ) -> None:
     """Run the pipeline (or demo with --demo)."""
@@ -559,6 +566,8 @@ def run(
             settings.language = language
         if locale is not None:
             settings.locale = locale
+        if verbatim_policy is not None:
+            settings.verbatim_policy = verbatim_policy
         if offline:
             settings.subtitles_mode = "heuristic"
 
@@ -572,6 +581,7 @@ def run(
             render_spec=render_spec,
             render_raw=render,
             offline=offline,
+            verbatim_policy=verbatim_policy,
         )
         job, workspace = _run_demo_pipeline(
             settings=settings,
@@ -606,6 +616,8 @@ def run(
         settings.burn_subtitles = burn_subtitles
     if subtitles is not None:
         settings.subtitles_mode = subtitles
+    if verbatim_policy is not None:
+        settings.verbatim_policy = verbatim_policy
 
     effective_level = log_level or settings.log_level
     configure_logging(effective_level)
@@ -618,6 +630,7 @@ def run(
         render_raw=render,
         qc=qc,
         subtitles=subtitles,
+        verbatim_policy=verbatim_policy,
     )
     job, workspace = _run_anchor_pipeline(
         settings=settings,
@@ -625,8 +638,8 @@ def run(
         cli_overrides=cli_overrides,
     )
 
-    if qc not in {"off", "warn", "strict"}:
-        raise typer.BadParameter("Invalid --qc. Use: off, warn, strict.")
+    if qc not in {"off", "warn", "strict", "broadcast"}:
+        raise typer.BadParameter("Invalid --qc. Use: off, warn, strict, broadcast.")
     if qc != "off":
         from techsprint.utils.qc import run_qc
 

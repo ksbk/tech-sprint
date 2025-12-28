@@ -20,6 +20,8 @@ def _last_srt_end(path: Path) -> str | None:
 def test_asr_subtitles_use_segment_timing(monkeypatch, tmp_path: Path) -> None:
     settings = Settings()
     settings.workdir = str(tmp_path / ".techsprint")
+    settings.captions_source = "asr"
+    settings.verbatim_policy = "audio"
     ws = Workspace.create(settings.workdir, run_id="asr1")
     job = Job(settings=settings, workspace=ws)
 

@@ -53,6 +53,8 @@ techsprint make --demo
 - `techsprint runs` – list recent runs
 - `techsprint inspect latest` – pretty-print the latest run.json
 - `techsprint open latest` – open the latest video in your OS
+- `techsprint run --qc strict` – enforce strict QC thresholds
+- `techsprint run --qc broadcast` – strict QC plus broadcast editorial checks
 
 Language/locale examples:
 
@@ -74,6 +76,30 @@ Diagnostics:
 ```bash
 techsprint doctor
 ```
+
+## Caption Verbatim Policy
+
+`TECHSPRINT_VERBATIM_POLICY` controls the caption source of truth:
+
+- `audio` (default): captions must match ASR output exactly (normalized only).
+- `script`: captions must match `script.txt` exactly (normalized only).
+
+Recommended usage:
+- **News/broadcast**: use `script` for editorial correctness of proper nouns.
+- **Accessibility captions**: use `audio` to mirror spoken words verbatim.
+
+CLI override:
+
+```bash
+techsprint run --verbatim-policy script
+```
+
+## QC Modes
+
+- `off`: no QC checks.
+- `warn`: emit warnings only.
+- `strict`: enforce timing/layout/CPS limits; text violations are warnings in verbatim mode.
+- `broadcast`: strict QC plus broadcast editorial checks, including verbatim diff summary and ASR confusion warnings.
 
 ## Next integrations (drop-in)
 

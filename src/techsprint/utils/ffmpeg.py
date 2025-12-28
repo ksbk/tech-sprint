@@ -219,11 +219,21 @@ def subtitle_style_params(
             outline = outline or 3
             shadow = shadow or 1
 
-    target = int(base_height * 0.045)
+    if profile in {"tiktok"}:
+        target_ratio = 0.046
+    elif profile in {"reels"}:
+        target_ratio = 0.044
+    elif profile in {"youtube-shorts", "youtube"}:
+        target_ratio = 0.042
+    else:
+        target_ratio = 0.043
+    target = int(base_height * target_ratio)
     available_width = base_width - margin_left - margin_right
     available_height = base_height - margin_top - margin_bottom
     max_font = _max_font_size(available_width, available_height, outline)
     font_size = max(24, min(target, max_font))
+    if base_width == 1080 and base_height == 1920:
+        font_size = min(max(font_size, 30), 42)
 
     return {
         "font_name": render.subtitle_font if render and render.subtitle_font else "Arial",

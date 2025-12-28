@@ -11,15 +11,17 @@ Does NOT:
 """
 
 from __future__ import annotations
+import json
 import math
 import os
 import re
+import unicodedata
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Optional
 
-from techsprint.domain.artifacts import SubtitleArtifact
+from techsprint.domain.artifacts import SubtitleArtifact, AsrArtifact
 from techsprint.domain.job import Job
 from techsprint.exceptions import TechSprintError
 from techsprint.utils import ffmpeg
@@ -56,13 +58,13 @@ def _parse_srt_time(value: str) -> float | None:
 MAX_SUBTITLE_LINES = 2
 MAX_CHARS_PER_LINE = 36
 HEURISTIC_MAX_CUE_SECONDS = 4.0
-CAPTION_MIN_SECONDS = 1.2
+CAPTION_MIN_SECONDS = 1.0
 CAPTION_TARGET_MIN_SECONDS = 1.8
 CAPTION_TARGET_MAX_SECONDS = 3.5
 CAPTION_STRONG_PUNCT_MAX_SECONDS = 4.0
 CAPTION_MAX_SECONDS = 6.0
 CAPTION_CPS_MAX = 17
-CAPTION_CPS_TARGET = 16
+CAPTION_CPS_TARGET = 15
 CAPTION_CPS_SOFT = 15
 CAPTION_WORDS_MAX = 12
 CAPTION_FRAME_RATE = 30
@@ -95,24 +97,24 @@ CAPTION_METADATA_RE = re.compile(r"\b(anchor|asterisk|narrator|speaker|sfx|music
 CAPTION_BRACKET_LINE_RE = re.compile(r"^\W*[\[\(].*[\]\)]\W*$")
 CAPTION_BAD_FORMS = {
     "hostel bid": "hostile bid",
-    "warner brothers": "Warner Discovery",
-    "warner brothers.": "Warner Discovery",
-    "warner bros": "Warner Discovery",
-    "warner bros.": "Warner Discovery",
-    "brothers' discovery": "Warner Discovery",
-    "brothers discovery": "Warner Discovery",
+    "warner brothers": "Warner Bros. Discovery",
+    "warner brothers.": "Warner Bros. Discovery",
+    "brothers' discovery": "Warner Bros. Discovery",
+    "brothers discovery": "Warner Bros. Discovery",
     "father -son": "father-son",
 }
 CAPTION_PROPER_NOUNS = {
-    "warner bros discovery": "Warner Discovery",
-    "warner bros. discovery": "Warner Discovery",
-    "brothers' discovery": "Warner Discovery",
-    "brothers discovery": "Warner Discovery",
-    "warner bros.": "Warner Discovery",
-    "warner bros": "Warner Discovery",
+    "warner discovery": "Warner Bros. Discovery",
+    "warner bros discovery": "Warner Bros. Discovery",
+    "warner bros. discovery": "Warner Bros. Discovery",
+    "brothers' discovery": "Warner Bros. Discovery",
+    "brothers discovery": "Warner Bros. Discovery",
+    "warner bros.": "Warner Bros.",
     "apple": "Apple",
     "tokyo": "Tokyo",
     "japanese": "Japanese",
+    "live translation": "Live Translation",
+    "gmail": "Gmail",
 }
 CAPTION_DANGLING_WORDS = {
     "and",
@@ -166,7 +168,21 @@ def _split_text_chunks(text: str, *, words_per_chunk: int = 12) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", stripped) if s.strip()]
+    protected = {
+        "Bros.": "Bros§",
+        "Mr.": "Mr§",
+        "Ms.": "Ms§",
+        "Dr.": "Dr§",
+        "St.": "St§",
+        "U.S.": "US§",
+    }
+    for token, repl in protected.items():
+        stripped = stripped.replace(token, repl)
+    sentences = [
+        s.strip().replace("§", ".")
+        for s in re.split(r"(?<=[.!?])\s+", stripped)
+        if s.strip()
+    ]
     if len(sentences) > 1:
         return sentences
     words = stripped.split()
@@ -176,6 +192,125 @@ def _split_text_chunks(text: str, *, words_per_chunk: int = 12) -> list[str]:
     for i in range(0, len(words), words_per_chunk):
         chunks.append(" ".join(words[i : i + words_per_chunk]))
     return chunks
+
+
+def _normalize_script_text(text: str) -> str:
+    cleaned = text.replace(r"\N", " ")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
+
+
+def _normalize_verbatim_text(text: str, *, remove_non_speech: bool) -> str:
+    cleaned = unicodedata.normalize("NFKC", text)
+    cleaned = (
+        cleaned.replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("…", "...")
+    )
+    if remove_non_speech:
+        cleaned = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", cleaned)
+    cleaned = cleaned.replace(r"\N", " ")
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
+
+
+def _normalize_script_chunk(text: str) -> str:
+    return _normalize_verbatim_text(text, remove_non_speech=False)
+
+
+def _tokenize_verbatim(text: str, *, normalize_case: bool) -> list[str]:
+    if normalize_case:
+        text = text.lower()
+    return re.findall(r"[\w]+(?:[\-']\w+)*|[^\w\s]", text, flags=re.UNICODE)
+
+
+def _read_srt_cues(path: Path) -> list[tuple[int, float, float, str]]:
+    cues: list[tuple[int, float, float, str]] = []
+    if not path.exists():
+        return cues
+    blocks = path.read_text(encoding="utf-8", errors="ignore").split("\n\n")
+    for block in blocks:
+        lines = [l.rstrip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        idx = None
+        timing_line = None
+        if lines and lines[0].strip().isdigit():
+            idx = int(lines[0].strip())
+            timing_line = lines[1] if len(lines) > 1 else None
+            text_lines = lines[2:] if len(lines) > 2 else []
+        else:
+            timing_line = lines[0]
+            text_lines = lines[1:]
+        if not timing_line or "-->" not in timing_line:
+            continue
+        parts = [p.strip() for p in timing_line.split("-->")]
+        if len(parts) != 2:
+            continue
+        start = _parse_srt_time(parts[0])
+        end = _parse_srt_time(parts[1])
+        if start is None or end is None:
+            continue
+        text = " ".join(t.strip() for t in text_lines if t.strip())
+        cues.append((idx or len(cues) + 1, start, end, text))
+    return cues
+
+
+def _verbatim_check_srt(
+    *,
+    srt_path: Path,
+    source_text: str,
+    remove_non_speech: bool,
+    normalize_case: bool,
+) -> dict:
+    source_norm = _normalize_verbatim_text(source_text, remove_non_speech=remove_non_speech)
+    source_tokens = _tokenize_verbatim(source_norm, normalize_case=normalize_case)
+    cues = _read_srt_cues(srt_path)
+    offset = 0
+    mismatch: dict | None = None
+    for cue_idx, _start, _end, text in cues:
+        cue_norm = _normalize_verbatim_text(text, remove_non_speech=remove_non_speech)
+        cue_tokens = _tokenize_verbatim(cue_norm, normalize_case=normalize_case)
+        if not cue_tokens:
+            continue
+        expected = source_tokens[offset : offset + len(cue_tokens)]
+        if cue_tokens != expected:
+            mismatch_index = offset
+            for local_idx, token in enumerate(cue_tokens):
+                expected_token = (
+                    source_tokens[offset + local_idx]
+                    if (offset + local_idx) < len(source_tokens)
+                    else None
+                )
+                if expected_token != token:
+                    mismatch_index = offset + local_idx
+                    break
+            mismatch = {
+                "mismatch_index": mismatch_index,
+                "expected_token": (
+                    source_tokens[mismatch_index] if mismatch_index < len(source_tokens) else None
+                ),
+                "actual_token": cue_tokens[mismatch_index - offset] if cue_tokens else None,
+                "cue": cue_idx,
+                "cue_text": text,
+            }
+            break
+        offset += len(cue_tokens)
+    if mismatch is None and offset != len(source_tokens):
+        mismatch = {
+            "mismatch_index": offset,
+            "expected_token": source_tokens[offset] if offset < len(source_tokens) else None,
+            "actual_token": None,
+            "cue": cues[-1][0] if cues else None,
+            "cue_text": cues[-1][3] if cues else "",
+        }
+    if mismatch:
+        return {"status": "fail", "mismatch": mismatch}
+    return {"status": "pass"}
 
 
 def _normalize_caption_text(text: str) -> str:
@@ -191,6 +326,7 @@ def _normalize_caption_text(text: str) -> str:
         if bad in lowered:
             cleaned = re.sub(re.escape(bad), good, cleaned, flags=re.IGNORECASE)
             lowered = cleaned.lower()
+    cleaned = re.sub(r"\.\.+", ".", cleaned)
     for term, canonical in CAPTION_PROPER_NOUNS.items():
         cleaned = re.sub(rf"(?i)\b{re.escape(term)}\b", canonical, cleaned)
     return cleaned
@@ -356,9 +492,10 @@ def _enforce_cps_target(text: str, *, duration: float) -> str:
     return _trim_text_for_cps(text, duration=duration, cps_max=CAPTION_CPS_TARGET)
 
 
-def _finalize_cue_text(text: str, *, duration: float) -> str:
+def _finalize_cue_text(text: str, *, duration: float, enforce_cps: bool = True) -> str:
     cleaned = _final_dangling_cleanup(text)
-    cleaned = _enforce_cps_target(cleaned, duration=duration)
+    if enforce_cps:
+        cleaned = _enforce_cps_target(cleaned, duration=duration)
     cleaned = _final_dangling_cleanup(cleaned)
     if cleaned:
         cleaned = _fix_sentence_punctuation(cleaned)
@@ -368,14 +505,25 @@ def _finalize_cue_text(text: str, *, duration: float) -> str:
 
 def _finalize_cues_for_srt(
     cues: list[tuple[float, float, str]],
+    *,
+    enforce_cps: bool = True,
 ) -> list[tuple[float, float, str]]:
     finalized: list[tuple[float, float, str]] = []
     for start, end, text in cues:
         duration = end - start
         if duration <= 0:
             continue
+        cps = len(text.replace(" ", "")) / duration if duration > 0 else 0.0
+        parts = 1
         if duration > CAPTION_MAX_SECONDS:
-            parts = max(2, math.ceil(duration / CAPTION_MAX_SECONDS))
+            parts = max(parts, math.ceil(duration / CAPTION_MAX_SECONDS))
+        if cps > CAPTION_CPS_MAX:
+            parts = max(parts, math.ceil(cps / CAPTION_CPS_MAX))
+        elif cps > CAPTION_CPS_TARGET:
+            parts = max(parts, math.ceil(cps / CAPTION_CPS_TARGET))
+        max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+        parts = min(parts, max_parts)
+        if parts > 1:
             chunks = _split_text_for_max_duration(text, parts)
             if not chunks:
                 continue
@@ -385,12 +533,21 @@ def _finalize_cues_for_srt(
                 seg_end = min(seg_start + slot, end)
                 if seg_end - seg_start <= 0:
                     continue
-                cleaned = _finalize_cue_text(chunk, duration=seg_end - seg_start)
+                seg_duration = seg_end - seg_start
+                cleaned = _finalize_cue_text(
+                    chunk,
+                    duration=seg_duration,
+                    enforce_cps=enforce_cps and seg_duration >= CAPTION_MIN_SECONDS,
+                )
                 if not cleaned:
                     continue
                 finalized.append((seg_start, seg_end, cleaned))
             continue
-        cleaned = _finalize_cue_text(text, duration=duration)
+        cleaned = _finalize_cue_text(
+            text,
+            duration=duration,
+            enforce_cps=enforce_cps and duration >= CAPTION_MIN_SECONDS,
+        )
         if cleaned:
             finalized.append((start, end, cleaned))
 
@@ -416,12 +573,365 @@ def _finalize_cues_for_srt(
         is_continuation_fn=_is_continuation,
         has_verb_fn=_has_verb,
         split_text_fn=_split_text_for_max_duration,
-        finalize_text_fn=_finalize_cue_text,
+        finalize_text_fn=lambda text, duration: _finalize_cue_text(
+            text,
+            duration=duration,
+            enforce_cps=enforce_cps,
+        ),
     )
-    return result.cues
+    return _split_cues_for_layout(result.cues, enforce_cps=enforce_cps)
 
 
-def _rewrite_srt_with_finalization(path: Path) -> None:
+def _split_cues_for_layout(
+    cues: list[tuple[float, float, str]],
+    *,
+    enforce_cps: bool = True,
+) -> list[tuple[float, float, str]]:
+    adjusted: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        duration = end - start
+        if duration <= 0:
+            continue
+        if not _chunk_exceeds_layout(text):
+            adjusted.append((start, end, text))
+            continue
+        max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+        chunks: list[str] | None = None
+        for parts in range(2, max_parts + 1):
+            candidate = _split_text_for_max_duration(text, parts)
+            if len(candidate) < 2:
+                continue
+            if all(not _chunk_exceeds_layout(chunk) for chunk in candidate):
+                chunks = candidate
+                break
+        if not chunks:
+            adjusted.append((start, end, text))
+            continue
+        slot = duration / len(chunks)
+        for idx, chunk in enumerate(chunks):
+            seg_start = start + slot * idx
+            seg_end = min(seg_start + slot, end)
+            if seg_end - seg_start <= 0:
+                continue
+            cleaned = _finalize_cue_text(
+                chunk,
+                duration=seg_end - seg_start,
+                enforce_cps=enforce_cps,
+            )
+            if cleaned:
+                adjusted.append((seg_start, seg_end, cleaned))
+    return adjusted
+
+
+def _asr_anchor_cues(
+    segments: list[dict],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    anchors: list[tuple[float, float, str]] = []
+    for seg in segments:
+        start = float(seg["start"])
+        end = float(seg["end"])
+        if audio_duration is not None:
+            end = min(end, audio_duration)
+        if end <= start:
+            continue
+        text = str(seg.get("text", "")).strip()
+        words = seg.get("words")
+        if words:
+            anchors.extend(
+                _split_asr_segment(
+                    start=start,
+                    end=end,
+                    text=text,
+                    words=words,
+                )
+            )
+        else:
+            anchors.append((start, end, text))
+    return anchors
+
+
+def _split_script_chunks(text: str) -> list[str]:
+    text = _normalize_verbatim_text(text, remove_non_speech=False)
+    chunks = _split_text_chunks(text)
+    refined: list[str] = []
+    for chunk in chunks:
+        cleaned = _normalize_verbatim_text(chunk, remove_non_speech=False)
+        if not cleaned:
+            continue
+        refined.append(cleaned)
+    return refined
+
+
+def _verbatim_cues_from_text(
+    *,
+    source_text: str,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    chunks = _split_script_chunks(source_text)
+    if not chunks or audio_duration is None or audio_duration <= 0:
+        return []
+    cleaned_chunks: list[str] = []
+    for chunk in chunks:
+        cleaned = _normalize_script_chunk(chunk)
+        if not cleaned:
+            continue
+        cleaned_chunks.append(cleaned)
+    if not cleaned_chunks:
+        return []
+    weights = [len(chunk.replace(" ", "")) for chunk in cleaned_chunks]
+    durations = _allocate_verbatim_durations(weights, total_duration=audio_duration)
+
+    cues: list[tuple[float, float, str]] = []
+    current = 0.0
+    for chunk, duration in zip(cleaned_chunks, durations, strict=True):
+        start = current
+        end = min(start + duration, audio_duration)
+        if end <= start:
+            continue
+        subchunks = _split_script_chunk_for_duration(chunk, duration=end - start)
+        if len(subchunks) > 1:
+            weights = [len(sc.replace(" ", "")) for sc in subchunks]
+            weight_sum = sum(weights) or len(subchunks)
+            sub_current = start
+            for sub, weight in zip(subchunks, weights, strict=True):
+                share = duration * (weight / weight_sum)
+                seg_start = sub_current
+                seg_end = min(seg_start + share, end)
+                if seg_end <= seg_start:
+                    continue
+                cues.append((seg_start, seg_end, sub))
+                sub_current = seg_end
+        else:
+            cues.append((start, end, subchunks[0] if subchunks else chunk))
+        current = end
+        if current >= audio_duration:
+            break
+    cues = _split_cues_for_layout_verbatim(cues)
+    cues = _rebalance_min_durations(cues, audio_duration=audio_duration)
+    cues = _rebalance_cps_targets(cues, audio_duration=audio_duration)
+    cues = _extend_last_cue_to_audio(cues, audio_duration=audio_duration)
+    cues = _split_cues_for_max_duration_verbatim(cues)
+    cues = _snap_cues_to_frame(cues)
+    cues = _enforce_min_duration(cues, audio_duration=audio_duration)
+    cues = _snap_cues_to_frame(cues)
+    return cues
+
+
+def _snap_cues_to_frame(
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    if not cues:
+        return []
+    snapped: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        snap_start = round(start * CAPTION_FRAME_RATE) / CAPTION_FRAME_RATE
+        snap_end = round(end * CAPTION_FRAME_RATE) / CAPTION_FRAME_RATE
+        if snap_end <= snap_start:
+            continue
+        snapped.append((snap_start, snap_end, text))
+    return snapped
+
+
+def _enforce_min_duration(
+    cues: list[tuple[float, float, str]],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if not cues:
+        return []
+    adjusted = list(cues)
+    for idx, (start, end, text) in enumerate(adjusted):
+        duration = end - start
+        if duration >= CAPTION_MIN_SECONDS:
+            continue
+        needed = CAPTION_MIN_SECONDS - duration
+        if needed <= 0:
+            continue
+        if idx + 1 < len(adjusted):
+            next_start, next_end, next_text = adjusted[idx + 1]
+            next_duration = next_end - next_start
+            slack = next_duration - CAPTION_MIN_SECONDS
+            if slack >= needed:
+                new_end = end + needed
+                new_next_start = next_start + needed
+                if new_end <= new_next_start and (new_end - start) <= CAPTION_MAX_SECONDS:
+                    adjusted[idx] = (start, new_end, text)
+                    adjusted[idx + 1] = (new_next_start, next_end, next_text)
+                    continue
+        if audio_duration is not None:
+            new_end = min(end + needed, audio_duration)
+            if new_end - start >= CAPTION_MIN_SECONDS and new_end - start <= CAPTION_MAX_SECONDS:
+                adjusted[idx] = (start, new_end, text)
+    return adjusted
+
+
+def _allocate_verbatim_durations(weights: list[int], *, total_duration: float) -> list[float]:
+    if not weights or total_duration <= 0:
+        return []
+    min_durations = [
+        max(CAPTION_MIN_SECONDS, weight / CAPTION_CPS_TARGET) if weight else CAPTION_MIN_SECONDS
+        for weight in weights
+    ]
+    total_min = sum(min_durations)
+    durations = list(min_durations)
+    if total_min < total_duration:
+        slack = total_duration - total_min
+        remaining = slack
+        total_weight = sum(weights) or len(weights)
+        for idx, base in enumerate(durations):
+            if remaining <= 0:
+                break
+            cap = CAPTION_MAX_SECONDS - base
+            if cap <= 0:
+                continue
+            share = slack * (weights[idx] / total_weight)
+            extra = min(cap, share, remaining)
+            durations[idx] += extra
+            remaining -= extra
+        if remaining > 0 and durations:
+            per = remaining / len(durations)
+            for idx in range(len(durations)):
+                if durations[idx] + per <= CAPTION_MAX_SECONDS:
+                    durations[idx] += per
+    elif total_min > total_duration:
+        shrinkable = sum(max(0.0, d - CAPTION_MIN_SECONDS) for d in durations)
+        if shrinkable > 0:
+            excess = total_min - total_duration
+            for idx, base in enumerate(durations):
+                margin = max(0.0, base - CAPTION_MIN_SECONDS)
+                if margin <= 0:
+                    continue
+                cut = min(margin, excess * (margin / shrinkable))
+                durations[idx] -= cut
+        if sum(durations) > total_duration:
+            scale = total_duration / sum(durations)
+            durations = [max(CAPTION_MIN_SECONDS, d * scale) for d in durations]
+    return durations
+
+
+def _split_script_chunk_for_duration(text: str, *, duration: float) -> list[str]:
+    if duration <= 0:
+        return []
+    cleaned = _normalize_verbatim_text(text, remove_non_speech=False)
+    if not cleaned:
+        return []
+    cps = len(cleaned.replace(" ", "")) / duration if duration > 0 else 0.0
+    parts = 1
+    if duration > CAPTION_MAX_SECONDS:
+        parts = max(parts, math.ceil(duration / CAPTION_MAX_SECONDS))
+    if cps > CAPTION_CPS_TARGET:
+        parts = max(parts, math.ceil(cps / CAPTION_CPS_TARGET))
+    max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+    parts = min(parts, max_parts)
+    if parts <= 1:
+        return [_normalize_script_chunk(cleaned)]
+    chunks = _split_text_for_max_duration(cleaned, parts)
+    if len(chunks) < 2:
+        return [_normalize_script_chunk(cleaned)]
+    normalized: list[str] = []
+    for chunk in chunks:
+        normalized_chunk = _normalize_script_chunk(chunk)
+        if normalized_chunk:
+            normalized.append(normalized_chunk)
+    return normalized
+
+
+def _script_cues_from_asr(
+    *,
+    script_text: str,
+    anchors: list[tuple[float, float, str]],
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    chunks = _split_script_chunks(script_text)
+    if not chunks or not anchors:
+        return []
+    total_words = sum(len(chunk.split()) for chunk in chunks)
+    if total_words <= 0:
+        return []
+    anchors = sorted(anchors, key=lambda c: c[0])
+    if len(anchors) < len(chunks):
+        total_duration = sum(end - start for start, end, _ in anchors if end > start)
+        if total_duration > 0:
+            virtual: list[tuple[float, float, str]] = []
+            remaining_slots = len(chunks)
+            remaining_duration = total_duration
+            for idx, (start, end, _) in enumerate(anchors):
+                duration = end - start
+                if duration <= 0:
+                    continue
+                if idx == len(anchors) - 1:
+                    slots = remaining_slots
+                else:
+                    slots = max(1, round(duration / remaining_duration * remaining_slots))
+                    max_slots = remaining_slots - (len(anchors) - idx - 1)
+                    slots = min(slots, max_slots)
+                slot = duration / slots if slots else duration
+                for slot_idx in range(slots):
+                    seg_start = start + slot * slot_idx
+                    seg_end = end if slot_idx == slots - 1 else min(start + slot * (slot_idx + 1), end)
+                    if seg_end > seg_start:
+                        virtual.append((seg_start, seg_end, ""))
+                remaining_slots -= slots
+                remaining_duration -= duration
+            if len(virtual) >= len(chunks):
+                anchors = virtual
+    anchor_idx = 0
+    remaining_anchors = len(anchors)
+    remaining_words = total_words
+    cues: list[tuple[float, float, str]] = []
+    for idx, chunk in enumerate(chunks):
+        chunk_words = len(chunk.split())
+        remaining_chunks = len(chunks) - idx
+        if idx == len(chunks) - 1:
+            group = anchors[anchor_idx:]
+        else:
+            share = max(1, round(chunk_words / max(remaining_words, 1) * remaining_anchors))
+            min_left = remaining_chunks - 1
+            share = min(share, remaining_anchors - min_left)
+            group = anchors[anchor_idx:anchor_idx + share]
+        if not group:
+            break
+        anchor_idx += len(group)
+        remaining_anchors -= len(group)
+        remaining_words -= chunk_words
+        start = group[0][0]
+        end = group[-1][1]
+        if audio_duration is not None:
+            end = min(end, audio_duration)
+        duration = end - start
+        if duration <= 0:
+            continue
+        cps = len(chunk.replace(" ", "")) / duration if duration > 0 else 0.0
+        parts = max(1, math.ceil(cps / CAPTION_CPS_TARGET))
+        if duration > CAPTION_MAX_SECONDS:
+            parts = max(parts, math.ceil(duration / CAPTION_MAX_SECONDS))
+        if parts > 1:
+            subchunks = _split_text_for_max_duration(chunk, parts)
+            if len(group) >= parts:
+                per = math.ceil(len(group) / parts)
+                for part_idx, sub in enumerate(subchunks):
+                    sub_group = group[part_idx * per : (part_idx + 1) * per]
+                    if not sub_group:
+                        break
+                    seg_start = sub_group[0][0]
+                    seg_end = sub_group[-1][1]
+                    if seg_end > seg_start:
+                        cues.append((seg_start, seg_end, sub))
+            else:
+                slot = duration / len(subchunks)
+                for part_idx, sub in enumerate(subchunks):
+                    seg_start = start + slot * part_idx
+                    seg_end = min(seg_start + slot, end)
+                    if seg_end > seg_start:
+                        cues.append((seg_start, seg_end, sub))
+        else:
+            cues.append((start, end, chunk))
+    return cues
+
+
+def _rewrite_srt_with_finalization(path: Path, *, enforce_cps: bool = True) -> None:
     if not path.exists():
         return
     cues: list[tuple[float, float, str]] = []
@@ -444,7 +954,7 @@ def _rewrite_srt_with_finalization(path: Path) -> None:
 
     if not cues:
         return
-    cues = _finalize_cues_for_srt(cues)
+    cues = _finalize_cues_for_srt(cues, enforce_cps=enforce_cps)
     lines: list[str] = []
     for idx, (start, end, text) in enumerate(cues, start=1):
         lines.append(str(idx))
@@ -730,10 +1240,12 @@ def _wrap_text_lines(
     max_chars: int = MAX_CHARS_PER_LINE,
     max_lines: int = MAX_SUBTITLE_LINES,
     duration_seconds: float | None = None,
+    sanitize: bool = True,
 ) -> str:
-    if duration_seconds is not None:
-        text = _finalize_cue_text(text, duration=duration_seconds)
-    text = _sanitize_caption_text(text)
+    if sanitize:
+        text = _sanitize_caption_text(text)
+    else:
+        text = _normalize_verbatim_text(text, remove_non_speech=False)
     words = text.strip().split()
     if not words:
         return ""
@@ -781,26 +1293,22 @@ def _wrap_text_lines(
                 break
     if len(lines) < max_lines and current:
         lines.append(" ".join(current))
-    if len(lines) > max_lines:
+    if sanitize and len(lines) > max_lines:
         lines = lines[:max_lines]
-    if len(lines) == max_lines and len(lines[-1]) > max_chars:
+    if sanitize and len(lines) == max_lines and len(lines[-1]) > max_chars:
         lines[-1] = lines[-1][:max_chars].rstrip()
-    if lines:
-        tail = lines[-1].rstrip()
-        if tail and not tail.endswith((".", "?", "!")):
-            if len(tail) >= max_chars:
-                tail = tail[:-1] + "."
-            else:
-                tail = tail + "."
-            lines[-1] = tail
     lines = _fix_line_edges(lines, duration_seconds=duration_seconds)
     return "\n".join(lines)
 
 
-def _chunk_exceeds_layout(text: str) -> bool:
-    wrapped = _wrap_text_lines(text)
+def _chunk_exceeds_layout(text: str, *, sanitize: bool = True) -> bool:
+    wrapped = _wrap_text_lines(text, sanitize=sanitize)
     wrapped_words = " ".join(wrapped.splitlines()).split()
-    original_words = _sanitize_caption_text(text).split()
+    original_words = (
+        _sanitize_caption_text(text)
+        if sanitize
+        else _normalize_verbatim_text(text, remove_non_speech=False)
+    ).split()
     if len(wrapped_words) != len(original_words):
         return True
     lines = wrapped.splitlines()
@@ -1159,6 +1667,7 @@ def _postprocess_cues(
     audio_duration: float | None,
     merge_gap_seconds: float = 0.2,
     apply_integrity: bool = True,
+    allow_trim: bool = True,
     repairs: list[str] | None = None,
 ) -> list[tuple[float, float, str]]:
     if not cues:
@@ -1220,20 +1729,21 @@ def _postprocess_cues(
         if cps <= CAPTION_CPS_TARGET:
             split_for_cps.append((start, end, text))
             continue
-        compressed = _compress_caption_text(text)
-        if compressed and compressed != text:
-            text = compressed
-            cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_TARGET:
-                split_for_cps.append((start, end, text))
-                continue
-        trimmed = _aggressive_trim_text(text)
-        if trimmed and trimmed != text:
-            text = trimmed
-            cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_TARGET:
-                split_for_cps.append((start, end, text))
-                continue
+        if allow_trim:
+            compressed = _compress_caption_text(text)
+            if compressed and compressed != text:
+                text = compressed
+                cps = len(text.replace(" ", "")) / duration if text else 0.0
+                if cps <= CAPTION_CPS_TARGET:
+                    split_for_cps.append((start, end, text))
+                    continue
+            trimmed = _aggressive_trim_text(text)
+            if trimmed and trimmed != text:
+                text = trimmed
+                cps = len(text.replace(" ", "")) / duration if text else 0.0
+                if cps <= CAPTION_CPS_TARGET:
+                    split_for_cps.append((start, end, text))
+                    continue
         parts = max(2, math.ceil(cps / CAPTION_CPS_TARGET))
         if parts <= 2 and cps > CAPTION_CPS_MAX:
             parts = 3
@@ -1277,6 +1787,8 @@ def _postprocess_cues(
         if duration < CAPTION_MIN_SECONDS - CAPTION_TOLERANCE_SECONDS and audio_duration is not None:
             end = min(start + CAPTION_MIN_SECONDS + 0.01, audio_duration)
         adjusted.append((start, end, text))
+
+    adjusted = _rebalance_cps_targets(adjusted, audio_duration=audio_duration)
 
     if audio_duration is not None and adjusted:
         last_start, last_end, last_text = adjusted[-1]
@@ -1325,13 +1837,14 @@ def _postprocess_cues(
         if cps <= CAPTION_CPS_TARGET:
             hardened.append((start, end, text))
             continue
-        trimmed = _aggressive_trim_text(text)
-        if trimmed and trimmed != text:
-            text = trimmed
-            cps = len(text.replace(" ", "")) / duration if text else 0.0
-            if cps <= CAPTION_CPS_TARGET:
-                hardened.append((start, end, text))
-                continue
+        if allow_trim:
+            trimmed = _aggressive_trim_text(text)
+            if trimmed and trimmed != text:
+                text = trimmed
+                cps = len(text.replace(" ", "")) / duration if text else 0.0
+                if cps <= CAPTION_CPS_TARGET:
+                    hardened.append((start, end, text))
+                    continue
         parts = max(2, math.ceil(cps / CAPTION_CPS_TARGET))
         if parts <= 2 and cps > CAPTION_CPS_MAX:
             parts = 3
@@ -1375,6 +1888,7 @@ def _postprocess_cues(
             audio_duration=audio_duration,
             merge_gap_seconds=0.0,
             apply_integrity=False,
+            allow_trim=allow_trim,
             repairs=repairs,
         )
     constrained: list[tuple[float, float, str]] = []
@@ -1395,21 +1909,34 @@ def _postprocess_cues(
         if split:
             constrained.extend(split)
             continue
-        max_chars = max(1, int(math.floor(duration * CAPTION_CPS_MAX)))
-        words = _sanitize_caption_text(text).split()
-        trimmed: list[str] = []
-        char_count = 0
-        for word in words:
-            word_chars = len(word)
-            if char_count + word_chars > max_chars:
-                break
-            trimmed.append(word)
-            char_count += word_chars
-        if not trimmed and words:
-            trimmed = [words[0]]
-        fallback_text = " ".join(trimmed) if trimmed else ""
-        if fallback_text:
-            constrained.append((start, end, fallback_text))
+        if not allow_trim and cps > CAPTION_CPS_MAX:
+            parts = max(2, math.ceil(cps / CAPTION_CPS_MAX))
+            parts = min(parts, max(1, int(duration / CAPTION_MIN_SECONDS)))
+            chunks = _split_text_by_parts(text, parts)
+            slot = duration / len(chunks)
+            for idx, chunk in enumerate(chunks):
+                seg_start = start + slot * idx
+                seg_end = min(seg_start + slot, end)
+                if seg_end - seg_start <= 0:
+                    continue
+                constrained.append((seg_start, seg_end, chunk))
+            continue
+        if allow_trim:
+            max_chars = max(1, int(math.floor(duration * CAPTION_CPS_MAX)))
+            words = _sanitize_caption_text(text).split()
+            trimmed: list[str] = []
+            char_count = 0
+            for word in words:
+                word_chars = len(word)
+                if char_count + word_chars > max_chars:
+                    break
+                trimmed.append(word)
+                char_count += word_chars
+            if not trimmed and words:
+                trimmed = [words[0]]
+            fallback_text = " ".join(trimmed) if trimmed else ""
+            if fallback_text:
+                constrained.append((start, end, fallback_text))
     hardened = constrained
     normalized: list[tuple[float, float, str]] = []
     for start, end, text in hardened:
@@ -1458,12 +1985,12 @@ def _postprocess_cues(
                     end = max_end
                     duration = new_duration
                     cps = new_cps
-        if cps > CAPTION_CPS_TARGET:
+        if cps > CAPTION_CPS_TARGET and allow_trim:
             compressed = _compress_caption_text(text)
             if compressed and compressed != text:
                 text = compressed
                 cps = len(text.replace(" ", "")) / duration if text else 0.0
-        if cps > CAPTION_CPS_TARGET:
+        if cps > CAPTION_CPS_TARGET and allow_trim:
             trimmed = _aggressive_trim_text(text)
             if trimmed and trimmed != text:
                 text = trimmed
@@ -1483,7 +2010,7 @@ def _postprocess_cues(
                     chunk_text = _dedupe_repeated_words(chunk_text)
                     cps_adjusted.append((seg_start, seg_end, chunk_text))
                 continue
-        if cps > CAPTION_CPS_MAX:
+        if cps > CAPTION_CPS_MAX and allow_trim:
             text = _trim_text_for_cps(text, duration=duration, cps_max=CAPTION_CPS_MAX)
         cps_adjusted.append((start, end, text))
 
@@ -1586,6 +2113,236 @@ def _postprocess_cues(
                 hardened_max.append((seg_start, seg_end, seg_text))
             i += 1
     return hardened_max
+
+
+def _rebalance_cps_targets(
+    cues: list[tuple[float, float, str]],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if len(cues) < 2:
+        return cues
+    adjusted = list(cues)
+    for idx in range(len(adjusted) - 1):
+        start, end, text = adjusted[idx]
+        duration = end - start
+        if duration <= 0:
+            continue
+        cps = len(text.replace(" ", "")) / duration if text else 0.0
+        if cps <= CAPTION_CPS_TARGET:
+            continue
+        needed = max(CAPTION_MIN_SECONDS, len(text.replace(" ", "")) / CAPTION_CPS_TARGET)
+        if needed <= duration:
+            continue
+        if duration >= CAPTION_MAX_SECONDS:
+            continue
+        next_start, next_end, next_text = adjusted[idx + 1]
+        next_duration = next_end - next_start
+        if next_duration <= CAPTION_MIN_SECONDS:
+            continue
+        slack = max(0.0, next_duration - CAPTION_MIN_SECONDS)
+        extend = min(slack, needed - duration, CAPTION_MAX_SECONDS - duration)
+        if extend <= 0:
+            continue
+        new_end = end + extend
+        new_next_start = next_start + extend
+        if new_end > new_next_start:
+            continue
+        if audio_duration is not None:
+            new_end = min(new_end, audio_duration)
+        adjusted[idx] = (start, new_end, text)
+        adjusted[idx + 1] = (new_next_start, next_end, next_text)
+    return adjusted
+
+
+def _rebalance_min_durations(
+    cues: list[tuple[float, float, str]],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if len(cues) < 2:
+        return cues
+    adjusted = list(cues)
+    for idx in range(len(adjusted) - 1):
+        start, end, text = adjusted[idx]
+        duration = end - start
+        if duration >= CAPTION_MIN_SECONDS:
+            continue
+        next_start, next_end, next_text = adjusted[idx + 1]
+        next_duration = next_end - next_start
+        if next_duration <= CAPTION_MIN_SECONDS:
+            continue
+        needed = CAPTION_MIN_SECONDS - duration
+        slack = max(0.0, next_duration - CAPTION_MIN_SECONDS)
+        extend = min(needed, slack, CAPTION_MAX_SECONDS - duration)
+        if extend <= 0:
+            continue
+        new_end = end + extend
+        new_next_start = next_start + extend
+        if new_end > new_next_start:
+            continue
+        if audio_duration is not None:
+            new_end = min(new_end, audio_duration)
+        adjusted[idx] = (start, new_end, text)
+        adjusted[idx + 1] = (new_next_start, next_end, next_text)
+    return adjusted
+
+
+def _extend_last_cue_to_audio(
+    cues: list[tuple[float, float, str]],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if audio_duration is None or not cues:
+        return cues
+    adjusted = list(cues)
+    last_start, last_end, last_text = adjusted[-1]
+    if (audio_duration - last_end) <= 0.2:
+        return adjusted
+    last_end = audio_duration
+    last_start = max(last_start, last_end - CAPTION_MAX_SECONDS)
+    if len(adjusted) > 1:
+        prev_start, prev_end, prev_text = adjusted[-2]
+        if prev_end >= last_start:
+            prev_end = max(prev_start + CAPTION_MIN_SECONDS, last_start - 0.02)
+            adjusted[-2] = (prev_start, prev_end, prev_text)
+            if prev_end >= last_start:
+                last_start = max(prev_end + 0.02, last_end - CAPTION_MIN_SECONDS)
+    adjusted[-1] = (last_start, last_end, last_text)
+    return adjusted
+
+
+def _verbatim_adjust_cues(
+    cues: list[tuple[float, float, str]],
+    *,
+    audio_duration: float | None,
+) -> list[tuple[float, float, str]]:
+    if not cues:
+        return []
+    def _snap(value: float) -> float:
+        return round(value * CAPTION_FRAME_RATE) / CAPTION_FRAME_RATE
+
+    cleaned: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        text = _normalize_verbatim_text(text, remove_non_speech=False)
+        if not text:
+            continue
+        if audio_duration is not None:
+            end = min(end, audio_duration)
+        start = _snap(start)
+        end = _snap(end)
+        if end <= start:
+            continue
+        cleaned.append((start, end, text))
+
+    adjusted: list[tuple[float, float, str]] = []
+    for start, end, text in cleaned:
+        duration = end - start
+        if duration <= 0:
+            continue
+        cps = len(text.replace(" ", "")) / duration if duration > 0 else 0.0
+        parts = 1
+        if duration > CAPTION_MAX_SECONDS:
+            parts = max(parts, math.ceil(duration / CAPTION_MAX_SECONDS))
+        if cps > CAPTION_CPS_MAX:
+            parts = max(parts, math.ceil(cps / CAPTION_CPS_MAX))
+        elif cps > CAPTION_CPS_TARGET:
+            parts = max(parts, math.ceil(cps / CAPTION_CPS_TARGET))
+        max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+        parts = min(parts, max_parts)
+        if parts > 1:
+            chunks = _split_text_for_max_duration(text, parts)
+            slot = duration / len(chunks)
+            for idx, chunk in enumerate(chunks):
+                seg_start = start + slot * idx
+                seg_end = min(seg_start + slot, end)
+                if seg_end <= seg_start:
+                    continue
+                adjusted.append((seg_start, seg_end, chunk))
+            continue
+        adjusted.append((start, end, text))
+
+    adjusted = _rebalance_min_durations(adjusted, audio_duration=audio_duration)
+    adjusted = _rebalance_cps_targets(adjusted, audio_duration=audio_duration)
+    adjusted = _extend_last_cue_to_audio(adjusted, audio_duration=audio_duration)
+    return adjusted
+
+
+def _split_cues_for_layout_verbatim(
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    adjusted: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        duration = end - start
+        if duration <= 0:
+            continue
+        if not _chunk_exceeds_layout(text, sanitize=False):
+            adjusted.append((start, end, text))
+            continue
+        max_parts = max(1, int(duration / CAPTION_MIN_SECONDS))
+        chunks: list[str] | None = None
+        for parts in range(2, max_parts + 1):
+            candidate = _split_text_for_max_duration(text, parts)
+            if len(candidate) < 2:
+                continue
+            if all(not _chunk_exceeds_layout(chunk, sanitize=False) for chunk in candidate):
+                chunks = candidate
+                break
+        if not chunks:
+            adjusted.append((start, end, text))
+            continue
+        weights = [len(chunk.replace(" ", "")) for chunk in chunks]
+        durations = _allocate_verbatim_durations(weights, total_duration=duration)
+        if not durations:
+            adjusted.append((start, end, text))
+            continue
+        current = start
+        for chunk, chunk_duration in zip(chunks, durations, strict=True):
+            seg_start = current
+            seg_end = min(seg_start + chunk_duration, end)
+            if seg_end - seg_start <= 0:
+                continue
+            adjusted.append((seg_start, seg_end, chunk))
+            current = seg_end
+    return adjusted
+
+
+def _split_cues_for_max_duration_verbatim(
+    cues: list[tuple[float, float, str]],
+) -> list[tuple[float, float, str]]:
+    if not cues:
+        return []
+    adjusted: list[tuple[float, float, str]] = []
+    for start, end, text in cues:
+        duration = end - start
+        if duration <= CAPTION_MAX_SECONDS:
+            adjusted.append((start, end, text))
+            continue
+        parts = max(2, math.ceil(duration / CAPTION_MAX_SECONDS))
+        chunks = _split_text_for_max_duration(text, parts)
+        if len(chunks) < 2:
+            chunks = _split_text_by_parts(text, parts)
+        if not chunks:
+            continue
+        slot = duration / len(chunks)
+        for idx, chunk in enumerate(chunks):
+            seg_start = start + slot * idx
+            seg_end = min(seg_start + slot, end)
+            if seg_end <= seg_start:
+                continue
+            subchunks = _split_script_chunk_for_duration(chunk, duration=seg_end - seg_start)
+            if len(subchunks) > 1:
+                sub_slot = (seg_end - seg_start) / len(subchunks)
+                sub_current = seg_start
+                for sub in subchunks:
+                    sub_end = min(sub_current + sub_slot, seg_end)
+                    if sub_end <= sub_current:
+                        continue
+                    adjusted.append((sub_current, sub_end, sub))
+                    sub_current = sub_end
+            else:
+                adjusted.append((seg_start, seg_end, subchunks[0] if subchunks else chunk))
+    return adjusted
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:
@@ -1780,6 +2537,121 @@ class SubtitleService:
                     raise TechSprintError("faster-whisper not installed; cannot use ASR subtitles.")
             else:
                 audio_duration = ffmpeg.probe_duration(audio)
+                verbatim_policy = job.settings.verbatim_policy
+                if verbatim_policy not in {"audio", "script"}:
+                    raise TechSprintError("Invalid verbatim_policy; use audio or script.")
+                log.info("Subtitle verbatim policy: %s", verbatim_policy)
+
+                cues: list[tuple[float, float, str]] = []
+                source_text = ""
+                if segments:
+                    asr_json_path = job.workspace.asr_json
+                    asr_txt_path = job.workspace.asr_txt
+                    asr_payload = {"segments": segments}
+                    asr_json_path.write_text(
+                        json.dumps(asr_payload, indent=2), encoding="utf-8"
+                    )
+                    asr_text = " ".join(
+                        str(seg.get("text", "")).strip() for seg in segments if seg.get("text")
+                    )
+                    asr_txt_path.write_text(asr_text, encoding="utf-8")
+                    job.artifacts.asr = AsrArtifact(
+                        path=asr_json_path,
+                        text_path=asr_txt_path,
+                        segment_count=len(segments),
+                        segment_stats=_segment_stats(segments),
+                    )
+                if verbatim_policy == "script":
+                    if audio_duration is not None:
+                        cues = _verbatim_cues_from_text(
+                            source_text=script_text,
+                            audio_duration=audio_duration,
+                        )
+                    if not cues:
+                        anchors = _asr_anchor_cues(segments, audio_duration=audio_duration)
+                        cues = _script_cues_from_asr(
+                            script_text=script_text,
+                            anchors=anchors,
+                            audio_duration=audio_duration,
+                        )
+                        cues = _verbatim_adjust_cues(cues, audio_duration=audio_duration)
+                    cues = _split_cues_for_layout_verbatim(cues)
+                    cues = _rebalance_min_durations(cues, audio_duration=audio_duration)
+                    cues = _rebalance_cps_targets(cues, audio_duration=audio_duration)
+                    cues = _extend_last_cue_to_audio(cues, audio_duration=audio_duration)
+                    cues = _split_cues_for_max_duration_verbatim(cues)
+                    source_text = script_text
+                else:
+                    source_text = " ".join(
+                        str(seg.get("text", "")).strip() for seg in segments if seg.get("text")
+                    )
+                    if audio_duration is not None:
+                        cues = _verbatim_cues_from_text(
+                            source_text=source_text,
+                            audio_duration=audio_duration,
+                        )
+                    if not cues:
+                        cues = [
+                            (float(seg["start"]), float(seg["end"]), str(seg.get("text", "")).strip())
+                            for seg in segments
+                            if seg.get("text")
+                        ]
+                        cues = _verbatim_adjust_cues(cues, audio_duration=audio_duration)
+                        cues = _split_cues_for_layout_verbatim(cues)
+                        cues = _rebalance_min_durations(cues, audio_duration=audio_duration)
+                        cues = _rebalance_cps_targets(cues, audio_duration=audio_duration)
+                        cues = _extend_last_cue_to_audio(cues, audio_duration=audio_duration)
+                        cues = _split_cues_for_max_duration_verbatim(cues)
+
+                if cues:
+                    lines: list[str] = []
+                    idx = 1
+                    for cue_start, cue_end, cue_text in cues:
+                        if cue_end <= cue_start:
+                            continue
+                        lines.append(str(idx))
+                        lines.append(f"{_format_srt_time(cue_start)} --> {_format_srt_time(cue_end)}")
+                        lines.append(
+                            _wrap_text_lines(
+                                cue_text,
+                                duration_seconds=cue_end - cue_start,
+                                sanitize=False,
+                            )
+                        )
+                        lines.append("")
+                        idx += 1
+                    out.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+                    verbatim_check = _verbatim_check_srt(
+                        srt_path=out,
+                        source_text=source_text,
+                        remove_non_speech=False,
+                        normalize_case=True,
+                    )
+                    job.verbatim_mode = True
+                    job.verbatim_policy = verbatim_policy
+                    job.verbatim_check = verbatim_check
+                    if verbatim_check.get("status") != "pass":
+                        mismatch = verbatim_check.get("mismatch", {})
+                        raise TechSprintError(
+                            "verbatim_violation: "
+                            f"index {mismatch.get('mismatch_index')}, "
+                            f"expected '{mismatch.get('expected_token')}', "
+                            f"got '{mismatch.get('actual_token')}', "
+                            f"cue {mismatch.get('cue')}"
+                        )
+                    return SubtitleArtifact(
+                        path=out,
+                        format="srt",
+                        text_path=text_path,
+                        text_sha256=subtitle_digest,
+                        source="asr" if verbatim_policy == "audio" else "script",
+                        segment_count=len(segments),
+                        segment_stats=_segment_stats(segments),
+                        cue_count=len(cues),
+                        cue_stats=_cue_stats(cues),
+                        asr_split=True,
+                    )
+
                 lines: list[str] = []
                 idx = 1
                 cues: list[tuple[float, float, str]] = []

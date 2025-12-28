@@ -20,6 +20,14 @@ class AudioArtifact:
 
 
 @dataclass(frozen=True)
+class AsrArtifact:
+    path: Path
+    text_path: Path | None = None
+    segment_count: int | None = None
+    segment_stats: dict | None = None
+
+
+@dataclass(frozen=True)
 class SubtitleArtifact:
     path: Path
     format: str = "srt"
@@ -46,5 +54,6 @@ class VideoArtifact:
 class Artifacts:
     script: Optional[ScriptArtifact] = None
     audio: Optional[AudioArtifact] = None
+    asr: Optional[AsrArtifact] = None
     subtitles: Optional[SubtitleArtifact] = None
     video: Optional[VideoArtifact] = None

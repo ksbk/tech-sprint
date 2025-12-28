@@ -18,6 +18,8 @@ and reproducibility, and may evolve in future versions.
     "anchor": "tech",
     "language": "en",
     "locale": "en-US",
+    "subtitles_mode": "auto",
+    "verbatim_policy": "audio",
     "rss_url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
     "max_items": 5,
     "model": "gpt-4o-mini",
@@ -34,6 +36,11 @@ and reproducibility, and may evolve in future versions.
   },
   "anchor_id": "tech",
   "renderer_id": "tiktok",
+  "captions_source_policy": "audio",
+  "verbatim_mode": true,
+  "verbatim_check": {
+    "status": "pass"
+  },
   "steps": [
     {
       "name": "fetch_news",
@@ -75,6 +82,12 @@ and reproducibility, and may evolve in future versions.
       "path": "/Users/ksb/dev/tech-sprint/.techsprint/exampledoc/audio.mp3",
       "size_bytes": 5
     },
+    "asr": {
+      "path": "/Users/ksb/dev/tech-sprint/.techsprint/exampledoc/asr.json",
+      "size_bytes": 1200,
+      "text_path": "/Users/ksb/dev/tech-sprint/.techsprint/exampledoc/asr.txt",
+      "segment_count": 8
+    },
     "subtitles": {
       "path": "/Users/ksb/dev/tech-sprint/.techsprint/exampledoc/captions.srt",
       "size_bytes": 38
@@ -98,6 +111,9 @@ and reproducibility, and may evolve in future versions.
 - `cli_overrides`: values explicitly provided by CLI flags (e.g., render, language).
 - `anchor_id`: anchor used for this run.
 - `renderer_id`: renderer profile (e.g., tiktok) or null.
+- `captions_source_policy`: verbatim policy used for captions (audio or script).
+- `verbatim_mode`: whether verbatim enforcement was enabled.
+- `verbatim_check`: pass/fail plus mismatch metadata when verbatim is enabled.
 - `steps`: ordered list of pipeline stages with timings.
 - `artifacts`: output file paths and sizes (bytes) for each artifact.
 - `media_probe`: ffprobe/ffmpeg metadata summary; may be null if unavailable.

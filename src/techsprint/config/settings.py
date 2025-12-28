@@ -44,6 +44,14 @@ class Settings(BaseSettings):
         default="auto",
         description="Subtitle generation mode: auto, asr, or heuristic.",
     )
+    captions_source: str = Field(
+        default="script",
+        description="Caption text source: script (default) or asr.",
+    )
+    verbatim_policy: str = Field(
+        default="audio",
+        description="Verbatim caption policy: audio (default) or script.",
+    )
 
     # ------------------------------------------------------------------
     # News
@@ -124,6 +132,8 @@ class Settings(BaseSettings):
             "language": self.language,
             "locale": self.locale,
             "subtitles_mode": self.subtitles_mode,
+            "captions_source": self.captions_source,
+            "verbatim_policy": self.verbatim_policy,
             "rss_url": self.rss_url,
             "max_items": self.max_items,
             "model": self.model,

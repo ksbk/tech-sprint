@@ -59,5 +59,13 @@ class Workspace:
         return self.path("subtitles_text.txt")
 
     @property
+    def asr_json(self) -> Path:
+        return self.path("asr.json")
+
+    @property
+    def asr_txt(self) -> Path:
+        return self.path("asr.txt")
+
+    @property
     def qc_report_json(self) -> Path:
         return self.path("qc_report.json")

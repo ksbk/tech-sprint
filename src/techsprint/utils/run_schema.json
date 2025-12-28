@@ -40,6 +40,9 @@
     },
     "anchor_id": { "type": "string", "minLength": 1 },
     "renderer_id": { "type": ["string", "null"], "minLength": 1 },
+    "captions_source_policy": { "type": ["string", "null"], "minLength": 1 },
+    "verbatim_mode": { "type": ["boolean", "null"] },
+    "verbatim_check": { "type": ["object", "null"], "additionalProperties": true },
     "steps": {
       "type": "array",
       "minItems": 0,
@@ -62,6 +65,7 @@
       "properties": {
         "script": { "$ref": "#/definitions/artifactEntry" },
         "audio": { "$ref": "#/definitions/artifactEntry" },
+        "asr": { "$ref": "#/definitions/artifactEntry" },
         "subtitles": { "$ref": "#/definitions/artifactEntry" },
         "video": { "$ref": "#/definitions/artifactEntry" }
       }

@@ -54,8 +54,8 @@ def test_qc_rejects_metadata_tokens(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(ffmpeg, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(ffmpeg, "probe_duration", lambda path: 2.0)
     monkeypatch.setattr(ffmpeg.shutil, "which", lambda _: None)
 
-    with pytest.raises(TechSprintError, match="Caption text/layout violations"):
-        run_qc(job, mode="strict")
+    qc = run_qc(job, mode="strict")
+    assert any("Caption text/layout violations" in warning for warning in qc["warnings"])

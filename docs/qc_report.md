@@ -10,3 +10,18 @@ Runs analyzed: 3
 
 ## Issues & Recommendations
 - No issues detected.
+
+## QC Modes
+
+- `off`: no QC checks.
+- `warn`: warnings only.
+- `strict`: enforce timing/layout/CPS thresholds; text violations are warnings in verbatim mode.
+- `broadcast`: strict QC plus broadcast editorial checks and verbatim diff summaries.
+
+### Broadcast QC Contract
+
+Broadcast mode adds the following on top of strict QC:
+
+- Records `verbatim_policy` and a diff summary for script/ASR/captions in `qc_report.json`.
+- Flags known ASR confusion terms as warnings under `verbatim_policy=audio`.
+- Hard-fails on: `end_punctuation`, `dangling_tail`, `forbidden_line_start`, `forbidden_line_end`, `min_duration`, `max_duration`, `max_cps`.

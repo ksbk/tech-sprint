@@ -17,6 +17,9 @@ class Job:
     ffmpeg_stderr_path: str | None = None
     run_log_path: str | None = None
     loudnorm_stats: dict | None = None
+    verbatim_mode: bool | None = None
+    verbatim_policy: str | None = None
+    verbatim_check: dict | None = None
 
     def with_artifacts(self, artifacts: Artifacts) -> "Job":
         self.artifacts = artifacts
