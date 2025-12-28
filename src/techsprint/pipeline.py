@@ -128,13 +128,10 @@ class Pipeline:
             return job
         finally:
             finished_at = clock()
-            try:
-                write_run_manifest(
-                    job=job,
-                    steps=timer.steps,
-                    started_at=started_at,
-                    finished_at=finished_at,
-                    render=self.render,
-                )
-            except Exception:
-                pass
+            write_run_manifest(
+                job=job,
+                steps=timer.steps,
+                started_at=started_at,
+                finished_at=finished_at,
+                render=self.render,
+            )
