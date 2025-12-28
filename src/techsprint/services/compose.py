@@ -41,7 +41,7 @@ class ComposeService:
     ffmpeg-based video renderer.
 
     Notes:
-    - Expects `job.settings.background_video` to be set.
+    - Uses a provided background video when available, falling back to a solid color.
     - Uses a RenderSpec (if provided) or `job.settings.burn_subtitles` to decide subtitle burn-in.
     """
 
@@ -53,15 +53,15 @@ class ComposeService:
         subs = job.workspace.subtitles_srt
 
         bg = job.settings.background_video
+        bg_path = Path(bg).expanduser().resolve() if bg else None
+        background_color = None
         if not bg:
-            raise RuntimeError(
-                "Missing background video. Set TECHSPRINT_BACKGROUND_VIDEO "
-                "or pass --background-video."
-            )
-
-        bg_path = Path(bg).expanduser().resolve()
-        if not bg_path.exists():
-            raise FileNotFoundError(f"Background video not found: {bg_path}")
+            log.warning("Missing background video; using solid color fallback.")
+            background_color = "black"
+        elif not bg_path.exists():
+            log.warning("Background video not found (%s); using solid color fallback.", bg_path)
+            background_color = "black"
+            bg_path = None
 
         if not audio.exists():
             raise FileNotFoundError(f"Audio not found: {audio}")
@@ -117,19 +117,23 @@ class ComposeService:
                 subtitles_force_style = False
 
         audio_duration = ffmpeg.probe_duration(audio)
-        bg_duration = ffmpeg.probe_duration(bg_path)
+        if audio_duration is None:
+            raise RuntimeError("Unable to determine audio duration via ffprobe.")
+
+        bg_duration = ffmpeg.probe_duration(bg_path) if bg_path else None
         loop_background = False
         if audio_duration and bg_duration:
             loop_background = audio_duration > (bg_duration + 0.05)
 
         cmd = ffmpeg.build_compose_cmd(
-            str(bg_path),
+            str(bg_path) if bg_path else None,
             str(audio),
             subtitles_path,
             str(out),
             render=render,
             duration_seconds=audio_duration,
             loop_background=loop_background,
+            background_color=background_color,
             max_subtitle_lines=MAX_SUBTITLE_LINES if burn_subtitles else None,
             max_chars_per_line=MAX_CHARS_PER_LINE if burn_subtitles else None,
             subtitles_force_style=subtitles_force_style,
