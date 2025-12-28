@@ -104,7 +104,7 @@ and reproducibility, and may evolve in future versions.
 
 ## Schema
 
-`run.json` is validated against [`docs/run_schema.json`](./run_schema.json) before being written.
+`run.json` is validated against [`src/techsprint/schemas/run_schema.json`](../src/techsprint/schemas/run_schema.json) before being written. That file is the single source of truth for the schema used by both runtime validation and documentation.
 
 ## Notes
 

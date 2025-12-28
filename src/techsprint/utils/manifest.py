@@ -141,9 +141,9 @@ def _parse_srt_time(value: str) -> float | None:
 
 
 def _load_run_manifest_schema() -> dict[str, Any]:
-    schema_path = Path(__file__).with_name("run_schema.json")
+    schema_path = Path(__file__).resolve().parent.parent / "schemas" / "run_schema.json"
     if not schema_path.exists():
-        raise FileNotFoundError(f"run_schema.json not found near {__file__}")
+        raise FileNotFoundError(f"run_schema.json not found at {schema_path}")
     try:
         return json.loads(schema_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
