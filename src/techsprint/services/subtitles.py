@@ -25,6 +25,7 @@ from techsprint.exceptions import TechSprintError
 from techsprint.utils import ffmpeg
 from techsprint.utils.text import normalize_text, sha256_text
 from techsprint.utils.logging import get_logger
+from techsprint.services import broadcast_contract
 
 log = get_logger(__name__)
 
@@ -315,6 +316,19 @@ def _needs_merge_continuation(text: str, next_text: str) -> bool:
     return False
 
 
+def _is_continuation(prev_text: str | None, text: str) -> bool:
+    if not text:
+        return False
+    if prev_text:
+        if not prev_text.rstrip().endswith((".", "?", "!")):
+            return True
+        if prev_text.rstrip().endswith((",", ";", ":")):
+            return True
+    if text[:1].islower():
+        return True
+    return False
+
+
 def _trim_text_for_cps(text: str, *, duration: float, cps_max: float) -> str:
     if duration <= 0:
         return text
@@ -393,7 +407,18 @@ def _finalize_cues_for_srt(
                 merged[-1] = (prev_start, end, merged_text)
                 continue
         merged.append((start, end, text))
-    return merged
+    result = broadcast_contract.enforce_contract(
+        merged,
+        max_seconds=CAPTION_MAX_SECONDS,
+        min_seconds=CAPTION_MIN_SECONDS,
+        forbidden_starts=CAPTION_FORBIDDEN_TOKENS,
+        dangling_tails=CAPTION_DANGLING_TAIL_WORDS,
+        is_continuation_fn=_is_continuation,
+        has_verb_fn=_has_verb,
+        split_text_fn=_split_text_for_max_duration,
+        finalize_text_fn=_finalize_cue_text,
+    )
+    return result.cues
 
 
 def _rewrite_srt_with_finalization(path: Path) -> None:
