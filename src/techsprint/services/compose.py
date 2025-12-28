@@ -138,6 +138,7 @@ class ComposeService:
             max_subtitle_lines=MAX_SUBTITLE_LINES if burn_subtitles else None,
             max_chars_per_line=MAX_CHARS_PER_LINE if burn_subtitles else None,
             subtitles_force_style=subtitles_force_style,
+            loudnorm=job.settings.loudnorm,
         )
 
         log.info("Rendering video -> %s", out)
@@ -152,6 +153,9 @@ class ComposeService:
         job.run_log_path = str(run_log)
 
         ffmpeg.run_ffmpeg(cmd, stderr_path=stderr_path)
+
+        if job.settings.loudnorm:
+            job.loudnorm_stats = ffmpeg.parse_loudnorm_log(stderr_path)
 
         if not out.exists() or out.stat().st_size == 0:
             raise RuntimeError(f"ffmpeg produced no output: {out}")

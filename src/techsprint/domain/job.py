@@ -16,6 +16,7 @@ class Job:
     ffmpeg_cmd: str | None = None
     ffmpeg_stderr_path: str | None = None
     run_log_path: str | None = None
+    loudnorm_stats: dict | None = None
 
     def with_artifacts(self, artifacts: Artifacts) -> "Job":
         self.artifacts = artifacts

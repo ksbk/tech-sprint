@@ -143,3 +143,39 @@ def test_ass_writer_keeps_commas_clean(tmp_path: Path) -> None:
     content = ass_path.read_text(encoding="utf-8")
     assert "Today, we ship." in content
     assert "Today\\," not in content
+
+
+def test_build_compose_cmd_includes_loudnorm() -> None:
+    cmd = ffmpeg.build_compose_cmd(
+        "bg.mp4",
+        "audio.mp3",
+        None,
+        "out.mp4",
+        loudnorm=True,
+    )
+    assert "-af" in cmd
+    idx = cmd.index("-af")
+    filters = cmd[idx + 1]
+    assert "loudnorm=" in filters
+    assert "aresample" in filters
+
+
+def test_parse_loudnorm_stderr_extracts_json() -> None:
+    stderr = """
+    frame=1
+    [Parsed_loudnorm_0 @ 0x1] {
+        "input_i" : "-23.0",
+        "input_tp" : "-5.0",
+        "input_lra" : "5.0",
+        "input_thresh" : "-33.0",
+        "output_i" : "-16.0",
+        "output_tp" : "-1.5",
+        "output_lra" : "7.0",
+        "output_thresh" : "-26.0",
+        "target_offset" : "0.0"
+    }
+    some trailing logs
+    """
+    data = ffmpeg.parse_loudnorm_stderr(stderr)
+    assert data is not None
+    assert data["output_i"] == "-16.0"

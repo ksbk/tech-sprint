@@ -187,6 +187,7 @@ def write_run_manifest(
         "ffmpeg_cmd": getattr(job, "ffmpeg_cmd", None),
         "ffmpeg_stderr_path": getattr(job, "ffmpeg_stderr_path", None),
         "run_log_path": getattr(job, "run_log_path", None),
+        "loudnorm_filter_stats": getattr(job, "loudnorm_stats", None),
     }
 
     out = job.workspace.run_manifest
