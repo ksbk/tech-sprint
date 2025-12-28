@@ -197,10 +197,11 @@ class DemoAudioService:
         try:
             ffmpeg.ensure_ffmpeg()
         except DependencyMissingError as exc:
-            raise TechSprintError(
+            raise DependencyMissingError(
                 "ffmpeg not found; demo audio fallback unavailable. "
                 "Install ffmpeg (e.g., `brew install ffmpeg`) to enable "
-                "sine audio generation."
+                "sine audio generation.",
+                exit_code=exc.exit_code,
             ) from exc
 
         duration = _estimate_sine_duration(text)
