@@ -1145,6 +1145,40 @@ def _postprocess_cues(
             apply_integrity=False,
             repairs=repairs,
         )
+    constrained: list[tuple[float, float, str]] = []
+    for start, end, text in hardened:
+        duration = end - start
+        if duration <= 0:
+            continue
+        cps = len(text.replace(" ", "")) / duration if text else 0.0
+        if cps <= CAPTION_CPS_MAX:
+            constrained.append((start, end, text))
+            continue
+        split = _split_cue_for_constraints(
+            start=start,
+            end=end,
+            text=text,
+            audio_duration=audio_duration,
+        )
+        if split:
+            constrained.extend(split)
+            continue
+        max_chars = max(1, int(math.floor(duration * CAPTION_CPS_MAX)))
+        words = _sanitize_caption_text(text).split()
+        trimmed: list[str] = []
+        char_count = 0
+        for word in words:
+            word_chars = len(word)
+            if char_count + word_chars > max_chars:
+                break
+            trimmed.append(word)
+            char_count += word_chars
+        if not trimmed and words:
+            trimmed = [words[0]]
+        fallback_text = " ".join(trimmed) if trimmed else ""
+        if fallback_text:
+            constrained.append((start, end, fallback_text))
+    hardened = constrained
     normalized: list[tuple[float, float, str]] = []
     for start, end, text in hardened:
         cleaned = _sanitize_caption_text(text)
@@ -1153,7 +1187,30 @@ def _postprocess_cues(
         cleaned = _fix_sentence_punctuation(cleaned)
         cleaned = _sentence_case(cleaned)
         normalized.append((start, end, cleaned))
-    return normalized
+    final_pass: list[tuple[float, float, str]] = []
+    for start, end, text in normalized:
+        duration = end - start
+        if duration <= 0:
+            continue
+        chars = len(text.replace(" ", ""))
+        if duration > 0 and chars / duration <= CAPTION_CPS_MAX:
+            final_pass.append((start, end, text))
+            continue
+        max_chars = max(1, int(math.floor(duration * CAPTION_CPS_MAX)))
+        words = text.split()
+        trimmed: list[str] = []
+        char_count = 0
+        for word in words:
+            word_chars = len(word)
+            if char_count + word_chars > max_chars:
+                break
+            trimmed.append(word)
+            char_count += word_chars
+        if not trimmed and words:
+            trimmed = [words[0]]
+        if trimmed:
+            final_pass.append((start, end, " ".join(trimmed)))
+    return final_pass
 
 
 def _cue_stats(cues: list[tuple[float, float, str]]) -> dict:

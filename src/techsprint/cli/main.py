@@ -4,6 +4,7 @@ import json
 import asyncio
 import subprocess
 import sys
+import functools
 from pathlib import Path
 import typer
 
@@ -23,10 +24,16 @@ app = typer.Typer(add_completion=False)
 log = get_logger(__name__)
 
 
-@app.exception_handler(TechSprintError)
-def _handle_techsprint_error(exc: TechSprintError) -> None:
-    typer.echo(f"{exc.label()}: {exc.message}", err=True)
-    raise typer.Exit(code=exc.exit_code or 1)
+def _handle_techsprint_errors(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):  # noqa: ANN002, ANN003
+        try:
+            return func(*args, **kwargs)
+        except TechSprintError as exc:
+            typer.echo(f"{exc.label()}: {exc.message}", err=True)
+            raise typer.Exit(code=exc.exit_code or 1)
+
+    return wrapper
 
 def _load_edge_tts():
     try:
@@ -188,6 +195,7 @@ def _collect_cli_overrides(
 
 
 @app.command()
+@_handle_techsprint_errors
 def anchors() -> None:
     """List available anchors."""
     for a in list_anchors():
@@ -195,12 +203,14 @@ def anchors() -> None:
 
 
 @app.command()
+@_handle_techsprint_errors
 def config() -> None:
     """Print resolved config."""
     s = Settings()
     typer.echo(json.dumps(s.to_public_dict(), indent=2))
 
 @app.command()
+@_handle_techsprint_errors
 def runs(
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
     limit: int = typer.Option(5, help="Limit number of runs shown."),
@@ -260,6 +270,7 @@ def runs(
 
 
 @app.command()
+@_handle_techsprint_errors
 def inspect(
     run_id: str = typer.Argument(..., help="Run id or 'latest'."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
@@ -276,6 +287,7 @@ def inspect(
 
 
 @app.command()
+@_handle_techsprint_errors
 def open(
     run_id: str = typer.Argument(..., help="Run id or 'latest'."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
@@ -298,6 +310,7 @@ def open(
 
 
 @app.command("debug-frame")
+@_handle_techsprint_errors
 def debug_frame(
     run_id: str = typer.Argument(..., help="Run id or 'latest'."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
@@ -324,6 +337,7 @@ def debug_frame(
 
 
 @app.command()
+@_handle_techsprint_errors
 def doctor() -> None:
     """Run environment diagnostics."""
     settings = Settings()
@@ -332,6 +346,7 @@ def doctor() -> None:
 
 
 @app.command()
+@_handle_techsprint_errors
 def voices(
     locale: str = typer.Option(None, help="Locale to filter voices (overrides config)."),
     limit: int = typer.Option(20, help="Limit number of voices shown."),
@@ -374,6 +389,7 @@ def voices(
         )
 
 @app.command()
+@_handle_techsprint_errors
 def make(
     anchor: str = typer.Option(None, help="Anchor id (overrides config)."),
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
@@ -444,6 +460,7 @@ def make(
 
 
 @app.command()
+@_handle_techsprint_errors
 def demo(
     workdir: str = typer.Option(None, help="Workdir for outputs (overrides config)."),
     log_level: str = typer.Option(None, help="Log level (overrides config)."),
@@ -499,6 +516,7 @@ def demo(
 
 
 @app.command()
+@_handle_techsprint_errors
 def run(
     demo_mode: bool = typer.Option(
         False,
