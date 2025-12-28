@@ -48,6 +48,11 @@ def test_compose_default_render_uses_settings(monkeypatch, tmp_path: Path) -> No
     workspace.subtitles_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
 
     calls = _capture_cmd(monkeypatch, workspace.output_mp4)
+    monkeypatch.setattr(
+        ffmpeg,
+        "probe_duration",
+        lambda path: 2.5 if Path(path) == workspace.audio_mp3 else 5.0,
+    )
     ComposeService().render(job)
 
     cmd = calls["cmd"]
@@ -58,6 +63,7 @@ def test_compose_default_render_uses_settings(monkeypatch, tmp_path: Path) -> No
 
     assert "-vf" in cmd
     vf = cmd[cmd.index("-vf") + 1]
+    assert "trim=duration=2.500" in vf
     assert "ass=" in vf
     assert "captions.ass" in vf
     assert "scale=" not in vf
@@ -80,6 +86,11 @@ def test_compose_custom_render_spec_controls_filters(monkeypatch, tmp_path: Path
     workspace.subtitles_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n")
 
     calls = _capture_cmd(monkeypatch, workspace.output_mp4)
+    monkeypatch.setattr(
+        ffmpeg,
+        "probe_duration",
+        lambda path: 4.0 if Path(path) == workspace.audio_mp3 else 6.0,
+    )
     render = RenderSpec("tiktok", 1080, 1920, fps=30, burn_subtitles=True)
     ComposeService().render(job, render=render)
 
@@ -91,6 +102,7 @@ def test_compose_custom_render_spec_controls_filters(monkeypatch, tmp_path: Path
 
     assert "-vf" in cmd
     vf = cmd[cmd.index("-vf") + 1]
+    assert "trim=duration=4.000" in vf
     assert "scale=1080:1920" in vf
     assert "fps=30" in vf
     assert "ass=" in vf

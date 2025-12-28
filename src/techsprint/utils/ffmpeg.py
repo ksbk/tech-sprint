@@ -19,7 +19,7 @@ def ensure_ffmpeg() -> None:
 
 
 def build_compose_cmd(
-    background_video: str,
+    background_video: str | None,
     narration_audio: str,
     subtitles_srt: str | None,
     out: str,
@@ -27,6 +27,7 @@ def build_compose_cmd(
     render: RenderSpec | None = None,
     duration_seconds: float | None = None,
     loop_background: bool = False,
+    background_color: str | None = None,
     max_subtitle_lines: int | None = None,
     max_chars_per_line: int | None = None,
     debug_safe_area: bool = False,
@@ -39,16 +40,27 @@ def build_compose_cmd(
         "-loglevel",
         "error",
     ]
-    if loop_background:
+    if background_video is None and background_color:
+        width = render.width if render else 1080
+        height = render.height if render else 1920
+        fps = render.fps if render else 30
+        color_source = f"color=c={background_color}:s={width}x{height}:r={fps}"
+        if duration_seconds is not None:
+            color_source += f":d={duration_seconds:.3f}"
+        cmd += ["-f", "lavfi", "-i", color_source]
+    elif loop_background:
         cmd += ["-stream_loop", "-1"]
-    cmd += [
-        "-i",
-        background_video,
-        "-i",
-        narration_audio,
-    ]
+
+    if background_video is not None:
+        cmd += ["-i", background_video]
+    elif background_color is None:
+        raise TechSprintError("Background video or color must be provided.")
+
+    cmd += ["-i", narration_audio]
 
     filters: list[str] = []
+    if duration_seconds is not None:
+        filters.append(f"trim=duration={duration_seconds:.3f},setpts=PTS-STARTPTS")
     if render is not None:
         filters.append(f"scale={render.width}:{render.height}")
         filters.append(f"fps={render.fps}")
